@@ -1950,6 +1950,7 @@ class MaskRCNN():
     def find_last(self):
         """Finds the last checkpoint file of the last trained model in the
         model directory.
+        查找训练历史文件
         Returns:
             log_dir: The directory where events and weights are saved
             checkpoint_path: the path to the last checkpoint file
@@ -2253,6 +2254,7 @@ class MaskRCNN():
         """Reformats the detections of one image from the format of the neural
         network output to a format suitable for use in the rest of the
         application.
+        反解析检测结果
 
         detections: [N, (y1, x1, y2, x2, class_id, score)]
         mrcnn_mask: [N, height, width, num_classes]
@@ -2312,7 +2314,7 @@ class MaskRCNN():
 
     def detect(self, images, verbose=0):
         """Runs the detection pipeline.
-
+        运行检测流程
         images: List of images, potentially of different sizes.
 
         Returns a list of dicts, one dict per image. The dict contains:
@@ -2322,8 +2324,7 @@ class MaskRCNN():
         masks: [H, W, N] instance binary masks
         """
         assert self.mode == "inference", "Create model in inference mode."
-        assert len(
-            images) == self.config.BATCH_SIZE, "len(images) must be equal to BATCH_SIZE"
+        assert len(images) == self.config.BATCH_SIZE, "len(images) must be equal to BATCH_SIZE"
 
         if verbose:
             log("Processing {} images".format(len(images)))
@@ -2404,6 +2405,7 @@ class MaskRCNN():
     def run_graph(self, images, outputs):
         """Runs a sub-set of the computation graph that computes the given
         outputs.
+        运行计算图的一个子图，以求出给定输出
 
         outputs: List of tuples (name, tensor) to compute. The tensors are
             symbolic TensorFlow tensors and the names are for easy tracking.
@@ -2458,11 +2460,12 @@ class MaskRCNN():
 def compose_image_meta(image_id, image_shape, window, active_class_ids):
     """Takes attributes of an image and puts them in one 1D array. Use
     parse_image_meta() to parse the values back.
+    将一张图片的信息放进一个1D数组中
 
     image_id: An int ID of the image. Useful for debugging.
     image_shape: [height, width, channels]
     window: (y1, x1, y2, x2) in pixels. The area of the image where the real
-            image is (excluding the padding)
+            image is (excluding the padding)    #图片上去除掉paading的部分，真正的图片部分
     active_class_ids: List of class_ids available in the dataset from which
         the image came. Useful if training on images from multiple datasets
         where not all classes are present in all datasets.
@@ -2480,6 +2483,7 @@ def compose_image_meta(image_id, image_shape, window, active_class_ids):
 def parse_image_meta(meta):
     """Parses an image info Numpy array to its components.
     See compose_image_meta() for more details.
+    解析图片信息，返回元组
     """
     image_id = meta[:, 0]
     image_shape = meta[:, 1:4]
@@ -2491,7 +2495,7 @@ def parse_image_meta(meta):
 def parse_image_meta_graph(meta):
     """Parses a tensor that contains image attributes to its components.
     See compose_image_meta() for more details.
-
+    解析图片信息，返回数组
     meta: [batch, meta length] where meta length depends on NUM_CLASSES
     """
     image_id = meta[:, 0]
@@ -2505,6 +2509,7 @@ def mold_image(images, config):
     """Takes RGB images with 0-255 values and subtraces
     the mean pixel and converts it to float. Expects image
     colors in RGB order.
+    在输入图片上去掉均值
     """
     return images.astype(np.float32) - config.MEAN_PIXEL
 
@@ -2521,11 +2526,12 @@ def unmold_image(normalized_images, config):
 def trim_zeros_graph(boxes, name=None):
     """Often boxes are represented with matricies of shape [N, 4] and
     are padded with zeros. This removes zero boxes.
+    去掉boxes中的填0部分
 
     boxes: [N, 4] matrix of boxes.
     non_zeros: [N] a 1D boolean mask identifying the rows to keep
     """
-    non_zeros = tf.cast(tf.reduce_sum(tf.abs(boxes), axis=1), tf.bool)
+    non_zeros = tf.cast(tf.reduce_sum(tf.abs(boxes), axis=1), tf.bool)   # N×1的bool矩阵
     boxes = tf.boolean_mask(boxes, non_zeros, name=name)
     return boxes, non_zeros
 
