@@ -230,7 +230,7 @@ class Dataset(object):
         self._image_ids = []
         self.image_info = []
         # Background is always the first class
-        self.class_info = [{"source": "", "id": 0, "name": "BG"}]
+        self.class_info = [{"source": "", "id": 0, "name": "BG"}]  #默认有背景类 BG
         self.source_class_ids = {}
 
     def add_class(self, source, class_id, class_name):
@@ -241,7 +241,7 @@ class Dataset(object):
                 # source.class_id combination already available, skip
                 return
         # Add the class
-        self.class_info.append({
+        self.class_info.append({                                   #添加其他类
             "source": source,
             "id": class_id,
             "name": class_name,

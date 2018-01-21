@@ -216,6 +216,7 @@ class CocoDataset(utils.Dataset):
 
     def load_mask(self, image_id):
         """Load instance masks for the given image.
+        一张图片上可能有多个实例，且分属不同的类
 
         Different datasets use different ways to store masks. This
         function converts the different mask format to one format
@@ -337,7 +338,7 @@ def build_coco_results(dataset, image_ids, rois, class_ids, scores, masks):
 
 
 def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=None):
-    """Runs official COCO evaluation.
+    """Runs official COCO evaluation. COCO官方的评估函数
     dataset: A Dataset object with valiadtion data
     eval_type: "bbox" or "segm" for bounding box or segmentation evaluation
     limit: if not 0, it's the number of images to use for evaluation
@@ -472,6 +473,7 @@ if __name__ == '__main__':
     if args.command == "train":
         # Training dataset. Use the training set and 35K from the
         # validation set, as as in the Mask RCNN paper.
+        # 训练数据集，使用原训练集train + 35K验证集valminusminval 与论文保持一致
         dataset_train = CocoDataset()
         dataset_train.load_coco(args.dataset, "train", year=args.year, auto_download=args.download)
         dataset_train.load_coco(args.dataset, "valminusminival", year=args.year, auto_download=args.download)
