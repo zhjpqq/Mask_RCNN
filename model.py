@@ -37,7 +37,7 @@ assert LooseVersion(keras.__version__) >= LooseVersion('2.0.8')
 
 
 ############################################################
-#  Utility Functions
+#  Utility Functions  公共函数
 ############################################################
 
 def log(text, array=None):
@@ -60,6 +60,8 @@ class BatchNorm(KL.BatchNormalization):
 
     Batch normalization has a negative effect on training if batches are small
     so we disable it here.
+
+    当Batches很小的时候，不使用BatchNormalization
     """
 
     def call(self, inputs, training=None):
@@ -67,7 +69,7 @@ class BatchNorm(KL.BatchNormalization):
 
 
 ############################################################
-#  Resnet Graph
+#  Resnet Graph  ResNet图
 ############################################################
 
 # Code adopted from:
@@ -76,12 +78,15 @@ class BatchNorm(KL.BatchNormalization):
 def identity_block(input_tensor, kernel_size, filters, stage, block,
                    use_bias=True):
     """The identity_block is the block that has no conv layer at shortcut
+    标识块：无卷积层的block
     # Arguments
         input_tensor: input tensor
         kernel_size: defualt 3, the kernel size of middle conv layer at main path
-        filters: list of integers, the nb_filters of 3 conv layer at main path
+        filters: list of integers, the nb_filters of 3 conv layer at main path，
+                主路径上，3个conv层的滤波器数量，是个列表，nb: 数量number
         stage: integer, current stage label, used for generating layer names
         block: 'a','b'..., current block label, used for generating layer names
+                layername = 'xxx' + 当前阶段stage + 当前模块block + 'xx'
     """
     nb_filter1, nb_filter2, nb_filter3 = filters
     conv_name_base = 'res' + str(stage) + block + '_branch'
@@ -92,7 +97,7 @@ def identity_block(input_tensor, kernel_size, filters, stage, block,
     x = BatchNorm(axis=3, name=bn_name_base + '2a')(x)
     x = KL.Activation('relu')(x)
 
-    x = KL.Conv2D(nb_filter2, (kernel_size, kernel_size), padding='same',
+    x = KL.Conv2D(nb_filter2, (kernel_size, kernel_size), padding='same',   #same与原图尺寸一致
                   name=conv_name_base + '2b', use_bias=use_bias)(x)
     x = BatchNorm(axis=3, name=bn_name_base + '2b')(x)
     x = KL.Activation('relu')(x)
@@ -101,7 +106,7 @@ def identity_block(input_tensor, kernel_size, filters, stage, block,
                   use_bias=use_bias)(x)
     x = BatchNorm(axis=3, name=bn_name_base + '2c')(x)
 
-    x = KL.Add()([x, input_tensor])
+    x = KL.Add()([x, input_tensor])  # 对输入处理之后 再加上输入
     x = KL.Activation('relu', name='res' + str(stage) + block + '_out')(x)
     return x
 
@@ -140,7 +145,7 @@ def conv_block(input_tensor, kernel_size, filters, stage, block,
                          name=conv_name_base + '1', use_bias=use_bias)(input_tensor)
     shortcut = BatchNorm(axis=3, name=bn_name_base + '1')(shortcut)
 
-    x = KL.Add()([x, shortcut])
+    x = KL.Add()([x, shortcut]) # 对输入做两种处理后再相加
     x = KL.Activation('relu', name='res' + str(stage) + block + '_out')(x)
     return x
 
@@ -179,15 +184,16 @@ def resnet_graph(input_image, architecture, stage5=False):
 
 
 ############################################################
-#  Proposal Layer
+#  Proposal Layer  推荐层
 ############################################################
 
 def apply_box_deltas_graph(boxes, deltas):
     """Applies the given deltas to the given boxes.
+    #   对给定的boxes应用给定的偏差deltas
     boxes: [N, 4] where each row is y1, x1, y2, x2
     deltas: [N, 4] where each row is [dy, dx, log(dh), log(dw)]
     """
-    # Convert to y, x, h, w
+    # Convert to y, x, h, w 对角坐标转换为中心坐标+宽高
     height = boxes[:, 2] - boxes[:, 0]
     width = boxes[:, 3] - boxes[:, 1]
     center_y = boxes[:, 0] + 0.5 * height
@@ -197,7 +203,7 @@ def apply_box_deltas_graph(boxes, deltas):
     center_x += deltas[:, 1] * width
     height *= tf.exp(deltas[:, 2])
     width *= tf.exp(deltas[:, 3])
-    # Convert back to y1, x1, y2, x2
+    # Convert back to y1, x1, y2, x2 转换为对角坐标
     y1 = center_y - 0.5 * height
     x1 = center_x - 0.5 * width
     y2 = y1 + height
@@ -208,6 +214,7 @@ def apply_box_deltas_graph(boxes, deltas):
 
 def clip_boxes_graph(boxes, window):
     """
+    按给定的window裁剪输入box
     boxes: [N, 4] each row is y1, x1, y2, x2
     window: [4] in the form y1, x1, y2, x2
     """
@@ -228,9 +235,10 @@ class ProposalLayer(KE.Layer):
     to the second stage. Filtering is done based on anchor scores and
     non-max suppression to remove overlaps. It also applies bounding
     box refinment detals to anchors.
-
+    根据输入的锚点，按得分排序，过滤出一个子集作为 proposals，传递到下一阶段。
+    过滤时根据得分和NMS来去除重叠。同时还对锚点进行细节精调、。
     Inputs:
-        rpn_probs: [batch, anchors, (bg prob, fg prob)]
+        rpn_probs: [batch, anchors, (bg prob, fg prob)] ？
         rpn_bbox: [batch, anchors, (dy, dx, log(dh), log(dw))]
 
     Returns:
@@ -241,6 +249,7 @@ class ProposalLayer(KE.Layer):
                  config=None, **kwargs):
         """
         anchors: [N, (y1, x1, y2, x2)] anchors defined in image coordinates
+                 按图像坐标定义的锚点
         """
         super(ProposalLayer, self).__init__(**kwargs)
         self.config = config
@@ -285,7 +294,7 @@ class ProposalLayer(KE.Layer):
                                   self.config.IMAGES_PER_GPU,
                                   names=["refined_anchors_clipped"])
 
-        # Filter out small boxes
+        # Filter out small boxes 过滤掉小盒子 根据X's论文会降低小物体的检出率，所以跳过
         # According to Xinlei Chen's paper, this reduces detection accuracy
         # for small objects, so we're skipping it.
 
@@ -350,9 +359,12 @@ class PyramidROIAlign(KE.Layer):
 
         # Feature Maps. List of feature maps from different level of the
         # feature pyramid. Each is [batch, height, width, channels]
+        # 特征金字塔不同层级的特征图构成的特征图列表。
+        # batch:每批图像的数量，h,w是金字塔各层级的高宽，channels应该是金字塔级数。
         feature_maps = inputs[1:]
 
         # Assign each ROI to a level in the pyramid based on the ROI area.
+        # 基于ROI面积，分配每个ROI到金字塔的一个层级上.
         y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)
         h = y2 - y1
         w = x2 - x1
@@ -363,11 +375,12 @@ class PyramidROIAlign(KE.Layer):
             self.image_shape[0] * self.image_shape[1], tf.float32)
         roi_level = log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
         roi_level = tf.minimum(5, tf.maximum(
-            2, 4 + tf.cast(tf.round(roi_level), tf.int32)))
+            2, 4 + tf.cast(tf.round(roi_level), tf.int32))) # 层级限定 2-5
         roi_level = tf.squeeze(roi_level, 2)
 
         # Loop through levels and apply ROI pooling to each. P2 to P5.
-        pooled = []
+        # 在各层上循环，并对每一个使用ROI池化. P2-P5层.
+        pooled = [] # 池化后的特征图
         box_to_level = []
         for i, level in enumerate(range(2, 6)):
             ix = tf.where(tf.equal(roi_level, level))
@@ -377,13 +390,15 @@ class PyramidROIAlign(KE.Layer):
             box_indices = tf.cast(ix[:, 0], tf.int32)
 
             # Keep track of which box is mapped to which level
+            # 跟踪哪个box被映射到哪个level
             box_to_level.append(ix)
 
             # Stop gradient propogation to ROI proposals
+            # 阻止ROI proposals上的梯度计算
             level_boxes = tf.stop_gradient(level_boxes)
             box_indices = tf.stop_gradient(box_indices)
 
-            # Crop and Resize
+            # Crop and Resize 裁剪和缩放
             # From Mask R-CNN paper: "We sample four regular locations, so
             # that we can evaluate either max or average pooling. In fact,
             # interpolating only a single value at each bin center (without
@@ -397,25 +412,30 @@ class PyramidROIAlign(KE.Layer):
                 method="bilinear"))
 
         # Pack pooled features into one tensor
+        # 将池化后的特征s装到一个tensor中
         pooled = tf.concat(pooled, axis=0)
 
         # Pack box_to_level mapping into one array and add another
         # column representing the order of pooled boxes
-        box_to_level = tf.concat(box_to_level, axis=0)
-        box_range = tf.expand_dims(tf.range(tf.shape(box_to_level)[0]), 1)
-        box_to_level = tf.concat([tf.cast(box_to_level, tf.int32), box_range],
+        # 将 box_to_level映射拼接到一个array中，并增加一列以反映其顺序
+        box_to_level = tf.concat(box_to_level, axis=0)  #列表转数组
+        box_range = tf.expand_dims(tf.range(tf.shape(box_to_level)[0]), 1)  # N×1维
+        box_to_level = tf.concat([tf.cast(box_to_level, tf.int32), box_range], # N×2维
                                  axis=1)
 
         # Rearrange pooled features to match the order of the original boxes
         # Sort box_to_level by batch then box index
         # TF doesn't have a way to sort by two columns, so merge them and sort.
+        # 重排池化特征，以匹配原始boxes的顺序。
+        # 对 box_to_level 先按batch排序，再按box index排序
         sorting_tensor = box_to_level[:, 0] * 100000 + box_to_level[:, 1]
         ix = tf.nn.top_k(sorting_tensor, k=tf.shape(
             box_to_level)[0]).indices[::-1]
         ix = tf.gather(box_to_level[:, 2], ix)
-        pooled = tf.gather(pooled, ix)
+        pooled = tf.gather(pooled, ix)  # 安装ix顺序重排pooled
 
         # Re-add the batch dimension
+        # 调整格式，增加batch维度
         pooled = tf.expand_dims(pooled, 0)
         return pooled
 
@@ -430,14 +450,16 @@ class PyramidROIAlign(KE.Layer):
 def overlaps_graph(boxes1, boxes2):
     """Computes IoU overlaps between two sets of boxes.
     boxes1, boxes2: [N, (y1, x1, y2, x2)].
+    计算2个boxes集合的IoU重叠部分 A∩B/A∪B
     """
     # 1. Tile boxes2 and repeate boxes1. This allows us to compare
     # every boxes1 against every boxes2 without loops.
     # TF doesn't have an equivalent to np.repeate() so simulate it
     # using tf.tile() and tf.reshape.
+    # 平铺boxes2,重复boxes1.可以比较每个boxes1和每个boxes2,而无需循环。
     b1 = tf.reshape(tf.tile(tf.expand_dims(boxes1, 1),
-                            [1, 1, tf.shape(boxes2)[0]]), [-1, 4])
-    b2 = tf.tile(boxes2, [tf.shape(boxes1)[0], 1])
+                            [1, 1, tf.shape(boxes2)[0]]), [-1, 4]) # N×4平铺
+    b2 = tf.tile(boxes2, [tf.shape(boxes1)[0], 1]) # N×1重复
     # 2. Compute intersections
     b1_y1, b1_x1, b1_y2, b1_x2 = tf.split(b1, 4, axis=1)
     b2_y1, b2_x1, b2_y2, b2_x2 = tf.split(b2, 4, axis=1)
@@ -459,6 +481,8 @@ def overlaps_graph(boxes1, boxes2):
 def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config):
     """Generates detection targets for one image. Subsamples proposals and
     generates target class IDs, bounding box deltas, and masks for each.
+    对每张图片生成检测目标。对proposals采样并生成 ROIS[class-IDs，BBX-shift，masks]。
+    gt:ground_truth
 
     Inputs:
     proposals: [N, (y1, x1, y2, x2)] in normalized coordinates. Might
@@ -472,7 +496,7 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     rois: [TRAIN_ROIS_PER_IMAGE, (y1, x1, y2, x2)] in normalized coordinates
     class_ids: [TRAIN_ROIS_PER_IMAGE]. Integer class IDs. Zero padded.
     deltas: [TRAIN_ROIS_PER_IMAGE, NUM_CLASSES, (dy, dx, log(dh), log(dw))]
-            Class-specific bbox refinments.
+            Class-specific bbox refinments. bbox的偏移量是按类指定的。
     masks: [TRAIN_ROIS_PER_IMAGE, height, width). Masks cropped to bbox
            boundaries and resized to neural network output size.
 
@@ -483,10 +507,11 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
         tf.Assert(tf.greater(tf.shape(proposals)[0], 0), [proposals],
                   name="roi_assertion"),
     ]
+    # 对Pros验证之后，封装进张量再返回
     with tf.control_dependencies(asserts):
         proposals = tf.identity(proposals)
 
-    # Remove zero padding
+    # Remove zero padding #移除proposals classID bbox mask中的0填充值
     proposals, _ = trim_zeros_graph(proposals, name="trim_proposals")
     gt_boxes, non_zeros = trim_zeros_graph(gt_boxes, name="trim_gt_boxes")
     gt_class_ids = tf.boolean_mask(gt_class_ids, non_zeros,
@@ -497,6 +522,7 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     # Handle COCO crowds
     # A crowd box in COCO is a bounding box around several instances. Exclude
     # them from training. A crowd box is given a negative class ID.
+    # 当一个BOX围住好几个物体实例时，称为Crowdbox，除非来自训练阶段，否则将被给予一个负标签
     crowd_ix = tf.where(gt_class_ids < 0)[:, 0]
     non_crowd_ix = tf.where(gt_class_ids > 0)[:, 0]
     crowd_boxes = tf.gather(gt_boxes, crowd_ix)
@@ -513,7 +539,7 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     crowd_iou_max = tf.reduce_max(crowd_overlaps, axis=1)
     no_crowd_bool = (crowd_iou_max < 0.001)
 
-    # Determine postive and negative ROIs
+    # Determine postive and negative ROIs   # 判定正负ROIs
     roi_iou_max = tf.reduce_max(overlaps, axis=1)
     # 1. Positive ROIs are those with >= 0.5 IoU with a GT box
     positive_roi_bool = (roi_iou_max >= 0.5)
@@ -541,7 +567,7 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     roi_gt_boxes = tf.gather(gt_boxes, roi_gt_box_assignment)
     roi_gt_class_ids = tf.gather(gt_class_ids, roi_gt_box_assignment)
 
-    # Compute bbox refinement for positive ROIs
+    # Compute bbox refinement for positive ROIs # 对正ROIs计算bbox的修正量
     deltas = utils.box_refinement_graph(positive_rois, roi_gt_boxes)
     deltas /= config.BBOX_STD_DEV
 
@@ -590,6 +616,7 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     return rois, roi_gt_class_ids, deltas, masks
 
 
+#对每张图片生成检测目标。对proposals采样并生成 ROIS[class-IDs，BBX-shift，masks]。\
 class DetectionTargetLayer(KE.Layer):
     """Subsamples proposals and generates target box refinment, class_ids,
     and masks for each.
@@ -669,6 +696,7 @@ def clip_to_window(window, boxes):
 def refine_detections(rois, probs, deltas, window, config):
     """Refine classified proposals and filter overlaps and return final
     detections.
+    精调分类后的props，过滤重叠部分，返回最后的检出
 
     Inputs:
         rois: [N, (y1, x1, y2, x2)] in normalized coordinates
@@ -741,6 +769,7 @@ def refine_detections(rois, probs, deltas, window, config):
 class DetectionLayer(KE.Layer):
     """Takes classified proposal boxes and their bounding box deltas and
     returns the final detection boxes.
+    基于分类后的proposal boxes和bbxd, 返回最终的box
 
     Returns:
     [batch, num_detections, (y1, x1, y2, x2, class_score)] in pixels
@@ -783,9 +812,9 @@ class DetectionLayer(KE.Layer):
 
 def rpn_graph(feature_map, anchors_per_location, anchor_stride):
     """Builds the computation graph of Region Proposal Network.
-
+    定义RPN的计算图
     feature_map: backbone features [batch, height, width, depth]
-    anchors_per_location: number of anchors per pixel in the feature map
+    anchors_per_location: number of anchors per pixel in the feature map #特征图中每个像素的锚点数量 每个锚点上有多个形状框 每个形状框算一个锚点
     anchor_stride: Controls the density of anchors. Typically 1 (anchors for
                    every pixel in the feature map), or 2 (every other pixel).
 
@@ -798,11 +827,13 @@ def rpn_graph(feature_map, anchors_per_location, anchor_stride):
     # TODO: check if stride of 2 causes alignment issues if the featuremap
     #       is not even.
     # Shared convolutional base of the RPN
+    # RPN网络的共享卷积层
     shared = KL.Conv2D(512, (3, 3), padding='same', activation='relu',
                        strides=anchor_stride,
                        name='rpn_conv_shared')(feature_map)
 
     # Anchor Score. [batch, height, width, anchors per location * 2].
+    # 锚点得分，为啥×2 ？
     x = KL.Conv2D(2 * anchors_per_location, (1, 1), padding='valid',
                   activation='linear', name='rpn_class_raw')(shared)
 
@@ -811,6 +842,7 @@ def rpn_graph(feature_map, anchors_per_location, anchor_stride):
         lambda t: tf.reshape(t, [tf.shape(t)[0], -1, 2]))(x)
 
     # Softmax on last dimension of BG/FG.
+    # 在背景/前景的最后一个维度上做softmax
     rpn_probs = KL.Activation(
         "softmax", name="rpn_class_xxx")(rpn_class_logits)
 
@@ -830,10 +862,12 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
     It wraps the RPN graph so it can be used multiple times with shared
     weights.
 
+    构建RPN的Keras模型，将RPN图封装，以便多次使用时共享权值
+
     anchors_per_location: number of anchors per pixel in the feature map
     anchor_stride: Controls the density of anchors. Typically 1 (anchors for
                    every pixel in the feature map), or 2 (every other pixel).
-    depth: Depth of the backbone feature map.
+    depth: Depth of the backbone feature map. # 骨架网络的特征图深度
 
     Returns a Keras Model object. The model outputs, when called, are:
     rpn_logits: [batch, H, W, 2] Anchor classifier logits (before softmax)
@@ -848,13 +882,14 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 
 
 ############################################################
-#  Feature Pyramid Network Heads
+#  Feature Pyramid Network Heads   FPN头部
 ############################################################
 
 def fpn_classifier_graph(rois, feature_maps,
                          image_shape, pool_size, num_classes):
     """Builds the computation graph of the feature pyramid network classifier
     and regressor heads.
+    构建FPN的计算图，包含分类头、回归头
 
     rois: [batch, num_rois, (y1, x1, y2, x2)] Proposal boxes in normalized
           coordinates.
@@ -908,6 +943,7 @@ def fpn_classifier_graph(rois, feature_maps,
 def build_fpn_mask_graph(rois, feature_maps,
                          image_shape, pool_size, num_classes):
     """Builds the computation graph of the mask head of Feature Pyramid Network.
+    构建FPN的mask头计算图
 
     rois: [batch, num_rois, (y1, x1, y2, x2)] Proposal boxes in normalized
           coordinates.
@@ -957,7 +993,7 @@ def build_fpn_mask_graph(rois, feature_maps,
 
 
 ############################################################
-#  Loss Functions
+#  Loss Functions  损失函数
 ############################################################
 
 def smooth_l1_loss(y_true, y_pred):
@@ -1023,7 +1059,6 @@ def rpn_bbox_loss_graph(config, target_bbox, rpn_match, rpn_bbox):
     diff = K.abs(target_bbox - rpn_bbox)
     less_than_one = K.cast(K.less(diff, 1.0), "float32")
     loss = (less_than_one * 0.5 * diff**2) + (1 - less_than_one) * (diff - 0.5)
-
     loss = K.switch(tf.size(loss) > 0, K.mean(loss), tf.constant(0.0))
     return loss
 
@@ -1049,7 +1084,7 @@ def mrcnn_class_loss_graph(target_class_ids, pred_class_logits,
 
     # Loss
     loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
-        labels=target_class_ids, logits=pred_class_logits)
+            labels=target_class_ids, logits=pred_class_logits)
 
     # Erase losses of predictions of classes that are not in the active
     # classes of the image.
@@ -1140,6 +1175,7 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
 def load_image_gt(dataset, config, image_id, augment=False,
                   use_mini_mask=False):
     """Load and return ground truth data for an image (image, mask, bounding boxes).
+    # 加载一张图片并返回其ground truth data: mask bbx
 
     augment: If true, apply random image augmentation. Currently, only
         horizontal flipping is offered.
@@ -1201,6 +1237,7 @@ def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, gt_masks, config):
     """Generate targets for training Stage 2 classifier and mask heads.
     This is not used in normal training. It's useful for debugging or to train
     the Mask RCNN heads without using the RPN head.
+    为训练阶段2的classifier-head和mask-head生成目标。
 
     Inputs:
     rpn_rois: [N, (y1, x1, y2, x2)] proposal boxes.
@@ -1261,7 +1298,7 @@ def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, gt_masks, config):
 
     # Negative ROIs are those with max IoU 0.1-0.5 (hard example mining)
     # TODO: To hard example mine or not to hard example mine, that's the question
-#     bg_ids = np.where((rpn_roi_iou_max >= 0.1) & (rpn_roi_iou_max < 0.5))[0]
+    # bg_ids = np.where((rpn_roi_iou_max >= 0.1) & (rpn_roi_iou_max < 0.5))[0]
     bg_ids = np.where(rpn_roi_iou_max < 0.5)[0]
 
     # Subsample ROIs. Aim for 33% foreground.
