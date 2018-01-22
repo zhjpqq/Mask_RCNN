@@ -2103,6 +2103,7 @@ class MaskRCNN():
     def compile(self, learning_rate, momentum):
         """Gets the model ready for training. Adds losses, regularization, and
         metrics. Then calls the Keras compile() function.
+        编译网络 → + Losses + Regulars + Metrics
         """
         # Optimizer object
         optimizer = keras.optimizers.SGD(lr=learning_rate, momentum=momentum,
