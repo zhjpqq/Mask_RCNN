@@ -1529,7 +1529,7 @@ def generate_random_rois(image_shape, count, gt_class_ids, gt_boxes):
     """Generates ROI proposals similar to what a region proposal network
     would generate.
 
-    生成ROI区域，功能类似于RPN网络
+    生成ROI区域，功能类似于RPN网络；90%在GT-box周围生成，10%在图像内随机生成
 
     image_shape: [Height, Width, Depth]
     count: Number of ROIs to generate
