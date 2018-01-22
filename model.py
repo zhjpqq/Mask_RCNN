@@ -1694,6 +1694,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                             rpn_rois, gt_class_ids, gt_boxes, gt_masks, config)
 
             # Init batch arrays
+            # 初始化为零数组
             if b == 0:
                 batch_image_meta = np.zeros(
                     (batch_size,) + image_meta.shape, dtype=image_meta.dtype)
@@ -1735,6 +1736,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                 gt_masks = gt_masks[:, :, ids]
 
             # Add to batch
+            # 将数据装入batch中
             batch_image_meta[b] = image_meta
             batch_rpn_match[b] = rpn_match[:, np.newaxis]
             batch_rpn_bbox[b] = rpn_bbox
@@ -1751,6 +1753,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                     batch_mrcnn_mask[b] = mrcnn_mask
             b += 1
 
+            # 直到装满一个batchSize,则yield返回一个迭代器
             # Batch full?
             if b >= batch_size:
                 inputs = [batch_images, batch_image_meta, batch_rpn_match, batch_rpn_bbox,
@@ -1772,9 +1775,10 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                 # start a new batch
                 b = 0
         except (GeneratorExit, KeyboardInterrupt):
+            # 生成器异常 或 键盘终止
             raise
         except:
-            # Log it and skip the image
+            # Log it and skip the image 其他异常
             logging.exception("Error processing image {}".format(
                 dataset.image_info[image_id]))
             error_count += 1
@@ -2153,6 +2157,7 @@ class MaskRCNN():
 
         for layer in layers:
             # Is the layer a model?
+            # 当某一layer本身就是Keras Model时，递归调用进行设定
             if layer.__class__.__name__ == 'Model':
                 print("In model: ", layer.name)
                 self.set_trainable(
@@ -2259,7 +2264,7 @@ class MaskRCNN():
                                             verbose=0, save_weights_only=True),
         ]
 
-        # Train
+        # Train  设置可训练Layer、并编译模型
         log("\nStarting at epoch {}. LR={}\n".format(self.epoch, learning_rate))
         log("Checkpoint Path: {}".format(self.checkpoint_path))
         self.set_trainable(layers)
