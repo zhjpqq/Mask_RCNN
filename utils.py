@@ -77,6 +77,7 @@ def compute_iou(box, boxes, box_area, boxes_area):
 def compute_overlaps(boxes1, boxes2):
     """Computes IoU overlaps between two sets of boxes.
     boxes1, boxes2: [N, (y1, x1, y2, x2)].
+    计算2套boxes，两两之间的IOU重叠值，使用矩阵批量计算
 
     For better performance, pass the largest set first and the smaller second.
     """
@@ -86,6 +87,7 @@ def compute_overlaps(boxes1, boxes2):
 
     # Compute overlaps to generate matrix [boxes1 count, boxes2 count]
     # Each cell contains the IoU value.
+    # 两两之间的交叠值，返回值为矩阵
     overlaps = np.zeros((boxes1.shape[0], boxes2.shape[0]))
     for i in range(overlaps.shape[1]):
         box2 = boxes2[i]

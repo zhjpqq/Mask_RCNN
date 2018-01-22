@@ -1395,6 +1395,8 @@ def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, gt_masks, config):
 def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
     """Given the anchors and GT boxes, compute overlaps and identify positive
     anchors and deltas to refine them to match their corresponding GT boxes.
+    给定锚点框和GT框，计算重合度以鉴别正锚点框，并精调以使其匹配 GT框
+    将随机采出的锚点框和GTBoxes进行对比，舍弃无效锚点框，校准有效锚点框。
 
     anchors: [num_anchors, (y1, x1, y2, x2)]
     gt_class_ids: [num_gt_boxes] Integer class IDs.
@@ -1403,35 +1405,47 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
     Returns:
     rpn_match: [N] (int32) matches between anchors and GT boxes.
                1 = positive anchor, -1 = negative anchor, 0 = neutral
+               # anchors 和 GT boxes 匹配成功的N个match
+               # 结果为→ [1,-1,1,0,1,-1,0,-1,-1 …… ]
     rpn_bbox: [N, (dy, dx, log(dh), log(dw))] Anchor bbox deltas.
+               # 根据锚点框和GT框相互比对，计算出中心偏差、长宽偏差
     """
     # RPN Match: 1 = positive anchor, -1 = negative anchor, 0 = neutral
+    # 记录anchors是否是一个好的anchor
     rpn_match = np.zeros([anchors.shape[0]], dtype=np.int32)
     # RPN bounding boxes: [max anchors per image, (dy, dx, log(dh), log(dw))]
+    # 在好的anchors中，进一步选出好的bbox
     rpn_bbox = np.zeros((config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4))
 
     # Handle COCO crowds
     # A crowd box in COCO is a bounding box around several instances. Exclude
     # them from training. A crowd box is given a negative class ID.
+    # 在训练阶段排除掉物体拥挤的框，拥挤框已被手工标记为负类标，可直接筛选出来
+    # 因为锚点框anchor最终要被匹配到GTbox上，如果GTbox拥挤，则anchor也会拥挤
     crowd_ix = np.where(gt_class_ids < 0)[0]
     if crowd_ix.shape[0] > 0:
         # Filter out crowds from ground truth class IDs and boxes
+        # 筛选发现拥挤GT框时，进行计算过滤
         non_crowd_ix = np.where(gt_class_ids > 0)[0]
         crowd_boxes = gt_boxes[crowd_ix]
         gt_class_ids = gt_class_ids[non_crowd_ix]
         gt_boxes = gt_boxes[non_crowd_ix]
         # Compute overlaps with crowd boxes [anchors, crowds]
+        # 计算锚点框和拥挤GT框的IoU  axis=1：留下与每个anchor最匹配的crowd-GT-box
+        # >0.001的锚点框为拥挤锚点框，一个框内有多个instance，应该去除
         crowd_overlaps = utils.compute_overlaps(anchors, crowd_boxes)
         crowd_iou_max = np.amax(crowd_overlaps, axis=1)
         no_crowd_bool = (crowd_iou_max < 0.001)
     else:
         # All anchors don't intersect a crowd
+        # 筛选未发现拥挤GT框时，全部gt-boxes,锚点框都合格
         no_crowd_bool = np.ones([anchors.shape[0]], dtype=bool)
 
     # Compute overlaps [num_anchors, num_gt_boxes]
+    # 计算每个锚点框和每个GT框的重合度 [锚点BOX, GT-BOX]
     overlaps = utils.compute_overlaps(anchors, gt_boxes)
 
-    # Match anchors to GT Boxes
+    # Match anchors to GT Boxes 将锚点框匹配到GT Boxes
     # If an anchor overlaps a GT box with IoU >= 0.7 then it's positive.
     # If an anchor overlaps a GT box with IoU < 0.3 then it's negative.
     # Neutral anchors are those that don't match the conditions above,
@@ -1441,18 +1455,23 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
     #
     # 1. Set negative anchors first. They get overwritten below if a GT box is
     # matched to them. Skip boxes in crowd areas.
-    anchor_iou_argmax = np.argmax(overlaps, axis=1)
+    # 低重合度的anchors==-1
+    # axis=1 每个锚点anchor与哪个GTbox更重合，先取最大argmax，再取阈值0.3
+    anchor_iou_argmax = np.argmax(overlaps, axis=1)     #[num_anchors, 1]
     anchor_iou_max = overlaps[np.arange(overlaps.shape[0]), anchor_iou_argmax]
     rpn_match[(anchor_iou_max < 0.3) & (no_crowd_bool)] = -1
     # 2. Set an anchor for each GT box (regardless of IoU value).
+    # 每个GTbox都应该至少有一个anchor，而无论其IoU值，==1
     # TODO: If multiple anchors have the same IoU match all of them
-    gt_iou_argmax = np.argmax(overlaps, axis=0)
+    gt_iou_argmax = np.argmax(overlaps, axis=0)         #[num_gt_boxes]
     rpn_match[gt_iou_argmax] = 1
     # 3. Set anchors with high overlap as positive.
+    # 高重合度的anchors ==1
     rpn_match[anchor_iou_max >= 0.7] = 1
 
     # Subsample to balance positive and negative anchors
     # Don't let positives be more than half the anchors
+    # 平衡正负锚点BOX，将多余的正负锚点box置为0
     ids = np.where(rpn_match == 1)[0]
     extra = len(ids) - (config.RPN_TRAIN_ANCHORS_PER_IMAGE // 2)
     if extra > 0:
@@ -1470,11 +1489,14 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
 
     # For positive anchors, compute shift and scale needed to transform them
     # to match the corresponding GT boxes.
+    # 遍历可有效匹配的anchors-box
+    # 计算正锚点anchor-box的偏移量，缩放尺度，以使其匹配GT-box
     ids = np.where(rpn_match == 1)[0]
     ix = 0  # index into rpn_bbox
     # TODO: use box_refinment() rather than duplicating the code here
     for i, a in zip(ids, anchors[ids]):
         # Closest gt box (it might have IoU < 0.7)
+        # 取离每个anchor最近的那个GT-box,就是重合度最高的那个
         gt = gt_boxes[anchor_iou_argmax[i]]
 
         # Convert coordinates to center plus width/height.
@@ -2175,6 +2197,7 @@ class MaskRCNN():
 
     def train(self, train_dataset, val_dataset, learning_rate, epochs, layers):
         """Train the model.
+        在数据集上训练模型，指定训练速率 训练回合数 训练层数
         train_dataset, val_dataset: Training and validation Dataset objects.
         learning_rate: The learning rate to train with
         epochs: Number of training epochs. Note that previous training epochs
@@ -2189,6 +2212,7 @@ class MaskRCNN():
               3+: Train Resnet stage 3 and up
               4+: Train Resnet stage 4 and up
               5+: Train Resnet stage 5 and up
+              用正则字典和Key过滤出要训练的层
         """
         assert self.mode == "training", "Create model in training mode."
 
@@ -2203,10 +2227,12 @@ class MaskRCNN():
             # All layers
             "all": ".*",
         }
+        # 返回待训练层需要满足的正则表达式
         if layers in layer_regex.keys():
             layers = layer_regex[layers]
 
         # Data generators
+        # 数据 生成器
         train_generator = data_generator(train_dataset, self.config, shuffle=True,
                                          batch_size=self.config.BATCH_SIZE)
         val_generator = data_generator(val_dataset, self.config, shuffle=True,
