@@ -322,7 +322,7 @@ class CocoDataset(utils.Dataset):
 
 def build_coco_results(dataset, image_ids, rois, class_ids, scores, masks):
     """Arrange resutls to match COCO specs in http://cocodataset.org/#format
-        按COCO数据集的官方要求，重排检测结果rois
+        按COCO数据集的官方格式，重新整理检测结果rois
     """
     # If no results, return an empty list
     if rois is None:
