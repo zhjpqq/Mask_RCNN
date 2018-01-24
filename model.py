@@ -2103,7 +2103,7 @@ class MaskRCNN():
     def compile(self, learning_rate, momentum):
         """Gets the model ready for training. Adds losses, regularization, and
         metrics. Then calls the Keras compile() function.
-        编译网络 → + Losses + Regulars + Metrics
+        编译网络流程：→ + Losses + Regulars → 编译 → + Metrics
         """
         # Optimizer object
         optimizer = keras.optimizers.SGD(lr=learning_rate, momentum=momentum,
@@ -2144,6 +2144,7 @@ class MaskRCNN():
     def set_trainable(self, layer_regex, keras_model=None, indent=0, verbose=1):
         """Sets model layers as trainable if their names match
         the given regular expression.
+        设置模型中的可训练层，如果其名字匹配给定的正则表达式
         """
         # Print message on the first call (but not on recursive calls)
         if verbose > 0 and keras_model is None:

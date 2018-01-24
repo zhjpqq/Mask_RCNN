@@ -29,6 +29,8 @@ COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0
 
 def extract_bboxes(mask):
     """Compute bounding boxes from masks.
+    从masks中计算boxes，面积转为角点坐标
+
     mask: [height, width, num_instances]. Mask pixels are either 1 or 0.
 
     Returns: bbox array [num_instances, (y1, x1, y2, x2)].
@@ -216,6 +218,7 @@ class Dataset(object):
     """The base class for dataset classes.
     To use it, create a new class that adds functions specific to the dataset
     you want to use. For example:
+    数据模型的基类，可继承后构建自己的数据集，如COCODataset,ShapeDataset
 
     class CatsAndDogsDataset(Dataset):
         def load_cats_and_dogs(self):
@@ -231,10 +234,11 @@ class Dataset(object):
     def __init__(self, class_map=None):
         self._image_ids = []
         self.image_info = []
-        # Background is always the first class
+        # Background is always the first class #背景始终是第一类
         self.class_info = [{"source": "", "id": 0, "name": "BG"}]  #默认有背景类 BG
         self.source_class_ids = {}
 
+    # 添加类信息
     def add_class(self, source, class_id, class_name):
         assert "." not in source, "Source name cannot contain a dot"
         # Does the class exist already?
@@ -242,13 +246,14 @@ class Dataset(object):
             if info['source'] == source and info["id"] == class_id:
                 # source.class_id combination already available, skip
                 return
-        # Add the class
-        self.class_info.append({                                   #添加其他类
+        # Add the class #添加其他类到类信息字典中
+        self.class_info.append({
             "source": source,
             "id": class_id,
             "name": class_name,
         })
 
+    # 添加图片信息
     def add_image(self, source, image_id, path, **kwargs):
         image_info = {
             "id": image_id,
@@ -267,6 +272,7 @@ class Dataset(object):
         """
         return ""
 
+    # 准备数据集以用于训练或测试
     def prepare(self, class_map=None):
         """Prepares the Dataset class for use.
 
@@ -278,16 +284,20 @@ class Dataset(object):
             return ",".join(name.split(",")[:1])
 
         # Build (or rebuild) everything else from the info dicts.
+        # 从信息字典 info dicts 中构建相关信息
         self.num_classes = len(self.class_info)
         self.class_ids = np.arange(self.num_classes)
         self.class_names = [clean_name(c["name"]) for c in self.class_info]
         self.num_images = len(self.image_info)
         self._image_ids = np.arange(self.num_images)
 
+        # 将源数据集的类别ID与新数据集的类别ID进行关联，源数据集可能源自多个数据集，如VOC,IMAGENET,COCO
         self.class_from_source_map = {"{}.{}".format(info['source'], info['id']): id
                                       for info, id in zip(self.class_info, self.class_ids)}
 
         # Map sources to class_ids they support
+        # 将源数据集的源Name与新数据集的类别ID进行关联
+        # 构建sources与class_ids之间的映射字典：source_class_ids{}
         self.sources = list(set([i['source'] for i in self.class_info]))
         self.source_class_ids = {}
         # Loop over datasets
@@ -299,6 +309,7 @@ class Dataset(object):
                 if i == 0 or source == info['source']:
                     self.source_class_ids[source].append(i)
 
+    # 映射源数据集.类标到新数据集类标
     def map_source_class_id(self, source_class_id):
         """Takes a source class ID and returns the int class ID assigned to it.
 
@@ -307,12 +318,14 @@ class Dataset(object):
         """
         return self.class_from_source_map[source_class_id]
 
+    # 获取类id在源数据集中的id
     def get_source_class_id(self, class_id, source):
         """Map an internal class ID to the corresponding class ID in the source dataset."""
         info = self.class_info[class_id]
         assert info['source'] == source
         return info['id']
 
+    # 增加额外数据集
     def append_data(self, class_info, image_info):
         self.external_to_class_id = {}
         for i, c in enumerate(self.class_info):
@@ -351,6 +364,8 @@ class Dataset(object):
         Different datasets use different ways to store masks. Override this
         method to load instance masks and return them in the form of am
         array of binary masks of shape [height, width, instances].
+        不同数据集使用不同方法来存储masks.重载此方法，按需要的格式加载masks。
+        image上的每个instance都有一个 h×w的二值掩膜，每个image上有多个instance。
 
         Returns:
             masks: A bool array of shape [height, width, instance count] with
@@ -367,6 +382,7 @@ class Dataset(object):
 def resize_image(image, min_dim=None, max_dim=None, padding=False):
     """
     Resizes an image keeping the aspect ratio.
+    缩放图像，并保持形状比例
 
     min_dim: if provided, resizes the image such that it's smaller
         dimension == min_dim
@@ -380,6 +396,7 @@ def resize_image(image, min_dim=None, max_dim=None, padding=False):
         be inserted in the returned image. If so, this window is the
         coordinates of the image part of the full image (excluding
         the padding). The x2, y2 pixels are not included.
+        填0之后的图像上的真正图像部分，原始图像在其上可能是个窗口
     scale: The scale factor used to resize the image
     padding: Padding added to the image [(top, bottom), (left, right), (0, 0)]
     """
@@ -419,6 +436,7 @@ def resize_mask(mask, scale, padding):
     """Resizes a mask using the given scale and padding.
     Typically, you get the scale and padding from resize_image() to
     ensure both, the image and the mask, are resized consistently.
+    从resize_image中获取scale和padding参数，确保image和mask的一致性
 
     scale: mask scaling factor
     padding: Padding to add to the mask in the form
@@ -433,6 +451,8 @@ def resize_mask(mask, scale, padding):
 def minimize_mask(bbox, mask, mini_shape):
     """Resize masks to a smaller version to cut memory load.
     Mini-masks can then resized back to image scale using expand_masks()
+
+    将mask缩放到小尺寸以节约内存，可以 expand_masks()返回去
 
     See inspect_data.ipynb notebook for more details.
     """
@@ -503,17 +523,23 @@ def generate_anchors(scales, ratios, shape, feature_stride, anchor_stride):
     feature_stride: Stride of the feature map relative to the image in pixels.
     anchor_stride: Stride of anchors on the feature map. For example, if the
         value is 2 then generate anchors for every other feature map pixel.
+
+    在特征图上生成锚点框
     """
     # Get all combinations of scales and ratios
+    # 获取所有scale和ratios的组合
     scales, ratios = np.meshgrid(np.array(scales), np.array(ratios))
     scales = scales.flatten()
     ratios = ratios.flatten()
 
     # Enumerate heights and widths from scales and ratios
+    # scale是方图的尺寸，再乘/除ration系数，即可变成各个形状
+    # 为确保width/height = ratio，ration要取根号
     heights = scales / np.sqrt(ratios)
     widths = scales * np.sqrt(ratios)
 
     # Enumerate shifts in feature space
+    # ?×freature_stride 缩放回原图大小？？
     shifts_y = np.arange(0, shape[0], anchor_stride) * feature_stride
     shifts_x = np.arange(0, shape[1], anchor_stride) * feature_stride
     shifts_x, shifts_y = np.meshgrid(shifts_x, shifts_y)
@@ -539,6 +565,9 @@ def generate_pyramid_anchors(scales, ratios, feature_shapes, feature_strides,
     is associated with a level of the pyramid, but each ratio is used in
     all levels of the pyramid.
 
+    在特征金字塔上生成锚点图。
+    每个scale都与金字塔中的一个level相互对应，但每个ration可以应用在各个level上
+
     Returns:
     anchors: [N, (y1, x1, y2, x2)]. All generated anchors in one array. Sorted
         with the same order of the given scales. So, anchors of scale[0] come
@@ -560,6 +589,7 @@ def generate_pyramid_anchors(scales, ratios, feature_shapes, feature_strides,
 def trim_zeros(x):
     """It's common to have tensors larger than the available data and
     pad with zeros. This function removes rows that are all zeros.
+    裁掉二维tensor中多余的0行
 
     x: [rows, columns].
     """
@@ -571,6 +601,7 @@ def compute_ap(gt_boxes, gt_class_ids,
                pred_boxes, pred_class_ids, pred_scores,
                iou_threshold=0.5):
     """Compute Average Precision at a set IoU threshold (default 0.5).
+    在给定的IOU阈值下计算平均精度mAP
 
     Returns:
     mAP: Mean Average Precision
@@ -617,7 +648,7 @@ def compute_ap(gt_boxes, gt_class_ids,
     precisions = np.cumsum(pred_match) / (np.arange(len(pred_match)) + 1)
     recalls = np.cumsum(pred_match).astype(np.float32) / len(gt_match)
 
-    # Pad with start and end values to simplify the math
+    # Pad with start and end values to simplify the math ？？
     precisions = np.concatenate([[0], precisions, [0]])
     recalls = np.concatenate([[0], recalls, [1]])
 
@@ -638,6 +669,7 @@ def compute_ap(gt_boxes, gt_class_ids,
 def compute_recall(pred_boxes, gt_boxes, iou):
     """Compute the recall at the given IoU threshold. It's an indication
     of how many GT boxes were found by the given prediction boxes.
+    给定IoU阈值，计算recall值。即有多少GT boxes被找出来了。
 
     pred_boxes: [N, (y1, x1, y2, x2)] in image coordinates
     gt_boxes: [N, (y1, x1, y2, x2)] in image coordinates
@@ -660,6 +692,10 @@ def compute_recall(pred_boxes, gt_boxes, iou):
 # an easy way to support batches > 1 quickly with little code modification.
 # In the long run, it's more efficient to modify the code to support large
 # batches and getting rid of this function. Consider this a temporary solution
+# 一些自定义层只支持1 batchSize, 支持>2需要很多工作来完成。、
+# 这个函数切割输入tensor沿着batch维度，并按size=1反馈这些batch.
+# 这是一个简单方法，以很少代码修改，即可实现对batches>1的支持。
+# 如果需要长期使用，更有效的办法是，放弃这个函数，并彻底修改代码来实现多batch的运行。
 def batch_slice(inputs, graph_fn, batch_size, names=None):
     """Splits inputs into slices and feeds each slice to a copy of the given
     computation graph and then combines the results. It allows you to run a

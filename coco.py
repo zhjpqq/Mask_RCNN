@@ -221,6 +221,7 @@ class CocoDataset(utils.Dataset):
         Different datasets use different ways to store masks. This
         function converts the different mask format to one format
         in the form of a bitmap [height, width, instances].
+        不同数据集使用不同方法存储masks.  本函数将其转换为统一格式:bitmap。
 
         Returns:
         masks: A bool array of shape [height, width, instance count] with
