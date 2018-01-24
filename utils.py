@@ -214,11 +214,14 @@ def box_refinement(box, gt_box):
 #  Dataset
 ############################################################
 
+#  数据集使用流程 ：
+#  构造类对象(继承) → 声明数据集(空对象) → 初始化数据集(加载填充load) →  准备数据集(基本信息统计prepare)
+
 class Dataset(object):
     """The base class for dataset classes.
     To use it, create a new class that adds functions specific to the dataset
     you want to use. For example:
-    数据模型的基类，可继承后构建自己的数据集，如COCODataset,ShapeDataset
+    数据模型的基类，可继承后构建自己的数据集，如COCODataset，ShapeDataset
 
     class CatsAndDogsDataset(Dataset):
         def load_cats_and_dogs(self):
@@ -260,12 +263,15 @@ class Dataset(object):
             "source": source,
             "path": path,
         }
+        # 增量式更新，kwargs中包含 height weight annotation
         image_info.update(kwargs)
         self.image_info.append(image_info)
 
     def image_reference(self, image_id):
         """Return a link to the image in its source Website or details about
         the image that help looking it up or debugging it.
+
+        返回一个指向图片信息的link，用于查看和调试图片
 
         Override for your dataset, but pass to this function
         if you encounter images not in your dataset.
@@ -309,7 +315,7 @@ class Dataset(object):
                 if i == 0 or source == info['source']:
                     self.source_class_ids[source].append(i)
 
-    # 映射源数据集.类标到新数据集类标
+    # 映射 源数据集.类标 到 新数据集类标
     def map_source_class_id(self, source_class_id):
         """Takes a source class ID and returns the int class ID assigned to it.
 
@@ -350,6 +356,7 @@ class Dataset(object):
 
     def load_image(self, image_id):
         """Load the specified image and return a [H,W,3] Numpy array.
+           按id加载图片，3D-arrary
         """
         # Load image
         image = skimage.io.imread(self.image_info[image_id]['path'])
@@ -360,6 +367,7 @@ class Dataset(object):
 
     def load_mask(self, image_id):
         """Load instance masks for the given image.
+        为给定图像加载掩膜
 
         Different datasets use different ways to store masks. Override this
         method to load instance masks and return them in the form of am

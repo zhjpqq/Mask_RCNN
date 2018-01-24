@@ -85,7 +85,7 @@ class CocoConfig(Config):
 
 
 ############################################################
-#  Dataset
+#  Dataset   用cocoapi抽取数据，再按照Dataset，封装出CocoDataset
 ############################################################
 
 class CocoDataset(utils.Dataset):
@@ -111,11 +111,13 @@ class CocoDataset(utils.Dataset):
         image_dir = "{}/{}{}".format(dataset_dir, subset, year)
 
         # Load all classes or a subset?
+        # 加载所有类，还是其子集
         if not class_ids:
             # All classes
             class_ids = sorted(coco.getCatIds())
 
         # All images or a subset?
+        # 加载所有图片，还是其子集
         if class_ids:
             image_ids = []
             for id in class_ids:
@@ -126,11 +128,11 @@ class CocoDataset(utils.Dataset):
             # All images
             image_ids = list(coco.imgs.keys())
 
-        # Add classes
+        # Add classes 添加类信息 class_info
         for i in class_ids:
             self.add_class("coco", i, coco.loadCats(i)[0]["name"])
 
-        # Add images
+        # Add images  添加图片信息 image_info
         for i in image_ids:
             self.add_image(
                 "coco", image_id=i,
@@ -216,12 +218,14 @@ class CocoDataset(utils.Dataset):
 
     def load_mask(self, image_id):
         """Load instance masks for the given image.
-        一张图片上可能有多个实例，且分属不同的类
+        一张图片上可能有多个物体，且分属不同的类
+        image_id → instance_mask×N → class_ID×N
 
         Different datasets use different ways to store masks. This
         function converts the different mask format to one format
         in the form of a bitmap [height, width, instances].
-        不同数据集使用不同方法存储masks.  本函数将其转换为统一格式:bitmap。
+        不同数据集使用不同方法存储masks.
+        本函数将其转换为统一格式:bitmap [height, width, instances]。
 
         Returns:
         masks: A bool array of shape [height, width, instance count] with
@@ -238,6 +242,7 @@ class CocoDataset(utils.Dataset):
         annotations = self.image_info[image_id]["annotations"]
         # Build mask of shape [height, width, instance_count] and list
         # of class IDs that correspond to each channel of the mask.
+        # 构造形为[height, weight, instance_count]的mask,且列出mask每个通道的class IDs
         for annotation in annotations:
             class_id = self.map_source_class_id(
                 "coco.{}".format(annotation['category_id']))
@@ -246,9 +251,11 @@ class CocoDataset(utils.Dataset):
                                    image_info["width"])
                 # Some objects are so small that they're less than 1 pixel area
                 # and end up rounded out. Skip those objects.
+                # 处理小物体标注
                 if m.max() < 1:
                     continue
                 # Is it a crowd? If so, use a negative class ID.
+                # 处理拥挤标注
                 if annotation['iscrowd']:
                     # Use negative class ID for crowds
                     class_id *= -1
@@ -282,6 +289,7 @@ class CocoDataset(utils.Dataset):
         """
         Convert annotation which can be polygons, uncompressed RLE to RLE.
         :return: binary mask (numpy 2D array)
+        将多边形、压缩行程码RLE、行程码RLE统一转换为行程码RLE
         """
         segm = ann['segmentation']
         if isinstance(segm, list):
@@ -301,6 +309,7 @@ class CocoDataset(utils.Dataset):
         """
         Convert annotation which can be polygons, uncompressed RLE, or RLE to binary mask.
         :return: binary mask (numpy 2D array)
+        将行程码格式的annotation转换为二值mask
         """
         rle = self.annToRLE(ann, height, width)
         m = maskUtils.decode(rle)
@@ -313,6 +322,7 @@ class CocoDataset(utils.Dataset):
 
 def build_coco_results(dataset, image_ids, rois, class_ids, scores, masks):
     """Arrange resutls to match COCO specs in http://cocodataset.org/#format
+        按COCO数据集的官方要求，重排检测结果rois
     """
     # If no results, return an empty list
     if rois is None:
@@ -339,7 +349,8 @@ def build_coco_results(dataset, image_ids, rois, class_ids, scores, masks):
 
 
 def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=None):
-    """Runs official COCO evaluation. COCO官方的评估函数
+    """Runs official COCO evaluation.
+    COCO官方的评估函数
     dataset: A Dataset object with valiadtion data
     eval_type: "bbox" or "segm" for bounding box or segmentation evaluation
     limit: if not 0, it's the number of images to use for evaluation
@@ -351,7 +362,7 @@ def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=Non
     if limit:
         image_ids = image_ids[:limit]
 
-    # Get corresponding COCO image IDs.
+    # Get corresponding COCO image IDs.  第1个id是二次封装后的id，第2个是在源数据集中的id
     coco_image_ids = [dataset.image_info[id]["id"] for id in image_ids]
 
     t_prediction = 0
@@ -475,6 +486,7 @@ if __name__ == '__main__':
         # Training dataset. Use the training set and 35K from the
         # validation set, as as in the Mask RCNN paper.
         # 训练数据集，使用原训练集train + 35K验证集valminusminval 与论文保持一致
+        # 声明数据集(空对象) → 初始化数据集(加载填充) →  准备数据集(基本信息统计)
         dataset_train = CocoDataset()
         dataset_train.load_coco(args.dataset, "train", year=args.year, auto_download=args.download)
         dataset_train.load_coco(args.dataset, "valminusminival", year=args.year, auto_download=args.download)
@@ -512,8 +524,11 @@ if __name__ == '__main__':
 
     elif args.command == "evaluate":
         # Validation dataset
+        # 声明COCO数据集
         dataset_val = CocoDataset()
+        # 初始化COCO数据集  并返回一个cocoapi的对象
         coco = dataset_val.load_coco(args.dataset, "minival", year=args.year, return_coco=True, auto_download=args.download)
+        # 准备COCO数据集 用于测试
         dataset_val.prepare()
         print("Running COCO evaluation on {} images.".format(args.limit))
         evaluate_coco(model, dataset_val, coco, "bbox", limit=int(args.limit))
