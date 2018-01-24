@@ -61,7 +61,7 @@ class BatchNorm(KL.BatchNormalization):
     Batch normalization has a negative effect on training if batches are small
     so we disable it here.
 
-    当Batches很小的时候，不使用BatchNormalization
+    当Batches很小的时候，不使用BatchNormalization，所以将其强制冻结
     """
 
     def call(self, inputs, training=None):
@@ -78,12 +78,13 @@ class BatchNorm(KL.BatchNormalization):
 def identity_block(input_tensor, kernel_size, filters, stage, block,
                    use_bias=True):
     """The identity_block is the block that has no conv layer at shortcut
-    标识块：无卷积层的block
+    resnet的基本模块：在短接中无卷积层的block    main_path vs shortcut
     # Arguments
         input_tensor: input tensor
         kernel_size: defualt 3, the kernel size of middle conv layer at main path
+                 主路径上，中间cov层的核尺寸
         filters: list of integers, the nb_filters of 3 conv layer at main path，
-                主路径上，3个conv层的滤波器数量，是个列表，nb: 数量number
+                主路径上，conv层的滤波器数量，是个列表，nb: 数量number
         stage: integer, current stage label, used for generating layer names
         block: 'a','b'..., current block label, used for generating layer names
                 layername = 'xxx' + 当前阶段stage + 当前模块block + 'xx'
@@ -106,7 +107,7 @@ def identity_block(input_tensor, kernel_size, filters, stage, block,
                   use_bias=use_bias)(x)
     x = BatchNorm(axis=3, name=bn_name_base + '2c')(x)
 
-    x = KL.Add()([x, input_tensor])  # 对输入处理之后 再加上输入
+    x = KL.Add()([x, input_tensor])  # shortcut 处理
     x = KL.Activation('relu', name='res' + str(stage) + block + '_out')(x)
     return x
 
@@ -114,6 +115,7 @@ def identity_block(input_tensor, kernel_size, filters, stage, block,
 def conv_block(input_tensor, kernel_size, filters, stage, block,
                strides=(2, 2), use_bias=True):
     """conv_block is the block that has a conv layer at shortcut
+    resnet的基本模块：在短接中有卷积层的block    main_path vs shortcut
     # Arguments
         input_tensor: input tensor
         kernel_size: defualt 3, the kernel size of middle conv layer at main path
@@ -150,6 +152,7 @@ def conv_block(input_tensor, kernel_size, filters, stage, block,
     return x
 
 
+# 获取resnet各层的特征图 C1 C2 C3 C4 C5
 def resnet_graph(input_image, architecture, stage5=False):
     assert architecture in ["resnet50", "resnet101"]
     # Stage 1
@@ -199,7 +202,7 @@ def apply_box_deltas_graph(boxes, deltas):
     center_y = boxes[:, 0] + 0.5 * height
     center_x = boxes[:, 1] + 0.5 * width
     # Apply deltas
-    center_y += deltas[:, 0] * height
+    center_y += deltas[:, 0] * height  # center_y = boxes[:,0]+(0.5+deltas[:,0])*height
     center_x += deltas[:, 1] * width
     height *= tf.exp(deltas[:, 2])
     width *= tf.exp(deltas[:, 3])
@@ -214,7 +217,7 @@ def apply_box_deltas_graph(boxes, deltas):
 
 def clip_boxes_graph(boxes, window):
     """
-    按给定的window裁剪输入box
+    剪辑到图像边界 将boxes放入图像window
     boxes: [N, 4] each row is y1, x1, y2, x2
     window: [4] in the form y1, x1, y2, x2
     """
@@ -238,7 +241,7 @@ class ProposalLayer(KE.Layer):
     根据输入的锚点，按得分排序，过滤出一个子集作为 proposals，传递到下一阶段。
     过滤时根据得分和NMS来去除重叠。同时还对锚点进行细节精调、。
     Inputs:
-        rpn_probs: [batch, anchors, (bg prob, fg prob)] ？
+        rpn_probs: [batch, anchors, (bg prob, fg prob)] 前景 背景预测概率
         rpn_bbox: [batch, anchors, (dy, dx, log(dh), log(dw))]
 
     Returns:
@@ -268,6 +271,8 @@ class ProposalLayer(KE.Layer):
 
         # Improve performance by trimming to top anchors by score
         # and doing the rest on the smaller subset.
+        # 先按score排序,获得排序后的index,再按ix把scores deltas anchors取出
+        # tf.gather(val,idx) 按索引idx收集val，按索引取值
         pre_nms_limit = min(6000, self.anchors.shape[0])
         ix = tf.nn.top_k(scores, pre_nms_limit, sorted=True,
                          name="top_anchors").indices
@@ -281,12 +286,14 @@ class ProposalLayer(KE.Layer):
 
         # Apply deltas to anchors to get refined anchors.
         # [batch, N, (y1, x1, y2, x2)]
+        # 修正得分高的锚点框 anchor-boxes
         boxes = utils.batch_slice([anchors, deltas],
                                   lambda x, y: apply_box_deltas_graph(x, y),
                                   self.config.IMAGES_PER_GPU,
                                   names=["refined_anchors"])
 
         # Clip to image boundaries. [batch, N, (y1, x1, y2, x2)]
+        # 剪辑到图像边界
         height, width = self.config.IMAGE_SHAPE[:2]
         window = np.array([0, 0, height, width]).astype(np.float32)
         boxes = utils.batch_slice(boxes,
@@ -299,17 +306,20 @@ class ProposalLayer(KE.Layer):
         # for small objects, so we're skipping it.
 
         # Normalize dimensions to range of 0 to 1.
+        # 归一化输出结果
         normalized_boxes = boxes / np.array([[height, width, height, width]])
 
         # Non-max suppression
+        # 非极大值抑制 2个判断方式：1.IoU值，2.props的数量
         def nms(normalized_boxes, scores):
             indices = tf.image.non_max_suppression(
                 normalized_boxes, scores, self.proposal_count,
                 self.nms_threshold, name="rpn_non_max_suppression")
             proposals = tf.gather(normalized_boxes, indices)
-            # Pad if needed
+            # Pad if needed 不符合阈值的用0填充
             padding = tf.maximum(self.proposal_count - tf.shape(proposals)[0], 0)
             proposals = tf.pad(proposals, [(0, padding), (0, 0)])
+            #tf.pad上下左右填充几排，此处只在下方填充padding行，props：[[y1,x1,y2,x2],……] N×4，每行一个prop
             return proposals
         proposals = utils.batch_slice([normalized_boxes, scores], nms,
                                       self.config.IMAGES_PER_GPU)
@@ -320,7 +330,7 @@ class ProposalLayer(KE.Layer):
 
 
 ############################################################
-#  ROIAlign Layer
+#  ROIAlign Layer  ROIAlign层
 ############################################################
 
 def log2_graph(x):
@@ -330,7 +340,7 @@ def log2_graph(x):
 
 class PyramidROIAlign(KE.Layer):
     """Implements ROI Pooling on multiple levels of the feature pyramid.
-
+    在特征金字塔上做ROI池化
     Params:
     - pool_shape: [height, width] of the output pooled regions. Usually [7, 7]
     - image_shape: [height, width, chanells]. Shape of input image in pixels
@@ -379,7 +389,7 @@ class PyramidROIAlign(KE.Layer):
         roi_level = tf.squeeze(roi_level, 2)
 
         # Loop through levels and apply ROI pooling to each. P2 to P5.
-        # 在各层上循环，并对每一个使用ROI池化. P2-P5层.
+        # 在各层上循环，并对每一层使用ROI池化. P2-P5层.
         pooled = [] # 池化后的特征图
         box_to_level = []
         for i, level in enumerate(range(2, 6)):
@@ -444,7 +454,7 @@ class PyramidROIAlign(KE.Layer):
 
 
 ############################################################
-#  Detection Target Layer
+#  Detection Target Layer  检测目标层
 ############################################################
 
 def overlaps_graph(boxes1, boxes2):
@@ -678,7 +688,7 @@ class DetectionTargetLayer(KE.Layer):
 
 
 ############################################################
-#  Detection Layer
+#  Detection Layer  检测层
 ############################################################
 
 def clip_to_window(window, boxes):
@@ -1169,7 +1179,7 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
 
 
 ############################################################
-#  Data Generator
+#  Data Generator  数据生成器
 ############################################################
 
 def load_image_gt(dataset, config, image_id, augment=False,
@@ -1818,6 +1828,7 @@ class MaskRCNN():
         assert mode in ['training', 'inference']
 
         # Image size must be dividable by 2 multiple times
+        # 图片尺寸必须被2整除，以防止上下采样出错
         h, w = config.IMAGE_SHAPE[:2]
         if h / 2**6 != int(h / 2**6) or w / 2**6 != int(w / 2**6):
             raise Exception("Image size must be dividable by 2 at least 6 times "
@@ -2536,7 +2547,7 @@ class MaskRCNN():
 
 
 ############################################################
-#  Data Formatting
+#  Data Formatting  数据格式化
 ############################################################
 
 def compose_image_meta(image_id, image_shape, window, active_class_ids):

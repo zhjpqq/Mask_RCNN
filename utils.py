@@ -710,8 +710,11 @@ def batch_slice(inputs, graph_fn, batch_size, names=None):
     graph on a batch of inputs even if the graph is written to support one
     instance only.
 
+    将输入切片，将每一片送入给定计算图的一个拷贝中，再组合其结果。
+    这可以实现在输入的一个batch上运行一个graph，即使这个图只能支持一个instance.
+
     inputs: list of tensors. All must have the same first dimension length
-    graph_fn: A function that returns a TF tensor that's part of a graph.
+    graph_fn: A function that returns a TF tensor that's part of a graph. 图函数
     batch_size: number of slices to divide the data into.
     names: If provided, assigns names to the resulting tensors.
     """
