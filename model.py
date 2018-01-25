@@ -933,13 +933,13 @@ def fpn_classifier_graph(rois, feature_maps,
     shared = KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 3), 2),
                        name="pool_squeeze")(x)
 
-    # Classifier head
+    # Classifier head  分类头
     mrcnn_class_logits = KL.TimeDistributed(KL.Dense(num_classes),
                                             name='mrcnn_class_logits')(shared)
     mrcnn_probs = KL.TimeDistributed(KL.Activation("softmax"),
                                      name="mrcnn_class")(mrcnn_class_logits)
 
-    # BBox head
+    # BBox head  检测头
     # [batch, boxes, num_classes * (dy, dx, log(dh), log(dw))]
     x = KL.TimeDistributed(KL.Dense(num_classes * 4, activation='linear'),
                            name='mrcnn_bbox_fc')(shared)
@@ -1871,11 +1871,12 @@ class MaskRCNN():
                     name="input_gt_masks", dtype=bool)
 
         # Build the shared convolutional layers.
-        # Bottom-up Layers
+        # Bottom-up Layers 从下到上的层
         # Returns a list of the last layers of each stage, 5 in total.
         # Don't create the thead (stage 5), so we pick the 4th item in the list.
+        # 返回每个stage最后一层，总共5层。
         _, C2, C3, C4, C5 = resnet_graph(input_image, "resnet101", stage5=True)
-        # Top-down Layers
+        # Top-down Layers  从上到下的层
         # TODO: add assert to varify feature map sizes match what's in config
         P5 = KL.Conv2D(256, (1, 1), name='fpn_c5p5')(C5)
         P4 = KL.Add(name="fpn_p4add")([
@@ -1911,6 +1912,7 @@ class MaskRCNN():
         rpn = build_rpn_model(config.RPN_ANCHOR_STRIDE,
                               len(config.RPN_ANCHOR_RATIOS), 256)
         # Loop through pyramid layers
+        # 遍历P5 P4 P3 P2计算RPN的输出
         layer_outputs = []  # list of lists
         for p in rpn_feature_maps:
             layer_outputs.append(rpn([p]))
@@ -1952,7 +1954,7 @@ class MaskRCNN():
             else:
                 target_rois = rpn_rois
 
-            # Generate detection targets
+            # Generate detection targets    # 生成检测目标用于训练
             # Subsamples proposals and generates target outputs for training
             # Note that proposal class IDs, gt_boxes, and gt_masks are zero
             # padded. Equally, returned rois and targets are zero padded.
@@ -1960,7 +1962,8 @@ class MaskRCNN():
                 DetectionTargetLayer(config, name="proposal_targets")([
                     target_rois, input_gt_class_ids, gt_boxes, input_gt_masks])
 
-            # Network Heads
+            # Network Heads 添加网络头部
+            # 分类头 检测头 分割头 都基于 mrcnn_feature_maps，rois 进行工作
             # TODO: verify that this handles zero padded ROIs
             mrcnn_class_logits, mrcnn_class, mrcnn_bbox =\
                 fpn_classifier_graph(rois, mrcnn_feature_maps, config.IMAGE_SHAPE,
@@ -1974,7 +1977,7 @@ class MaskRCNN():
             # TODO: clean up (use tf.identify if necessary)
             output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
 
-            # Losses
+            # Losses 添加损失
             rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")(
                 [input_rpn_match, rpn_class_logits])
             rpn_bbox_loss = KL.Lambda(lambda x: rpn_bbox_loss_graph(config, *x), name="rpn_bbox_loss")(
@@ -1986,7 +1989,7 @@ class MaskRCNN():
             mask_loss = KL.Lambda(lambda x: mrcnn_mask_loss_graph(*x), name="mrcnn_mask_loss")(
                 [target_mask, target_class_ids, mrcnn_mask])
 
-            # Model
+            # Model 最终模型
             inputs = [input_image, input_image_meta,
                       input_rpn_match, input_rpn_bbox, input_gt_class_ids, input_gt_boxes, input_gt_masks]
             if not config.USE_RPN_ROIS:
@@ -1999,16 +2002,19 @@ class MaskRCNN():
         else:
             # Network Heads
             # Proposal classifier and BBox regressor heads
+            # 添加网络头部 Proposals分类头 BBox回归头
             mrcnn_class_logits, mrcnn_class, mrcnn_bbox =\
                 fpn_classifier_graph(rpn_rois, mrcnn_feature_maps, config.IMAGE_SHAPE,
                                      config.POOL_SIZE, config.NUM_CLASSES)
 
             # Detections
             # output is [batch, num_detections, (y1, x1, y2, x2, class_id, score)] in image coordinates
+            # 输出检测结果 bbox
             detections = DetectionLayer(config, name="mrcnn_detection")(
                 [rpn_rois, mrcnn_class, mrcnn_bbox, input_image_meta])
 
             # Convert boxes to normalized coordinates
+            # 归一化检测结果 bbox
             # TODO: let DetectionLayer return normalized coordinates to avoid
             #       unnecessary conversions
             h, w = config.IMAGE_SHAPE[:2]
@@ -2016,6 +2022,7 @@ class MaskRCNN():
                 lambda x: x[..., :4] / np.array([h, w, h, w]))(detections)
 
             # Create masks for detections
+            # 为检测创建masks
             mrcnn_mask = build_fpn_mask_graph(detection_boxes, mrcnn_feature_maps,
                                               config.IMAGE_SHAPE,
                                               config.MASK_POOL_SIZE,
@@ -2026,7 +2033,7 @@ class MaskRCNN():
                                  mrcnn_mask, rpn_rois, rpn_class, rpn_bbox],
                              name='mask_rcnn')
 
-        # Add multi-GPU support.
+        # Add multi-GPU support. 多GPU支持
         if config.GPU_COUNT > 1:
             from parallel_model import ParallelModel
             model = ParallelModel(model, config.GPU_COUNT)
@@ -2311,6 +2318,10 @@ class MaskRCNN():
         images: List of image matricies [height,width,depth]. Images can have
             different sizes.
 
+            输入一个图片list,将其格式调整为网络所规定的格式。
+            尺寸缩放 + 去通道均值
+            返回：调整后的img, img的meta信息，img上的原始window
+
         Returns 3 Numpy matricies:
         molded_images: [N, h, w, 3]. Images resized and normalized.
         image_metas: [N, length of meta data]. Details about each image.
@@ -2347,7 +2358,8 @@ class MaskRCNN():
         """Reformats the detections of one image from the format of the neural
         network output to a format suitable for use in the rest of the
         application.
-        反解析检测结果
+
+        对网络输出的检测结果进行格式解析，以将其用于其他位置
 
         detections: [N, (y1, x1, y2, x2, class_id, score)]
         mrcnn_mask: [N, height, width, num_classes]
@@ -2363,6 +2375,7 @@ class MaskRCNN():
         """
         # How many detections do we have?
         # Detections array is padded with zeros. Find the first class_id == 0.
+        # 去除补零后，有多少实际检测值
         zero_ix = np.where(detections[:, 4] == 0)[0]
         N = zero_ix[0] if zero_ix.shape[0] > 0 else detections.shape[0]
 
@@ -2395,6 +2408,7 @@ class MaskRCNN():
             N = class_ids.shape[0]
 
         # Resize masks to original image size and set boundary threshold.
+        # 将掩膜调整到原图大小，并设置边界阈值
         full_masks = []
         for i in range(N):
             # Convert neural network mask to full size mask
@@ -2448,6 +2462,7 @@ class MaskRCNN():
 
     def ancestor(self, tensor, name, checked=None):
         """Finds the ancestor of a TF tensor in the computation graph.
+        找到计算图中某个TF tensor的祖先
         tensor: TensorFlow symbolic tensor.
         name: Name of ancestor tensor to find
         checked: For internal use. A list of tensors that were already
