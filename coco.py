@@ -85,7 +85,7 @@ class CocoConfig(Config):
 
 
 ############################################################
-#  Dataset   用cocoapi抽取数据，再按照Dataset，封装出CocoDataset
+#  Dataset   用cocoapi抽取数据，再按照Dataset，封装出CocoDataset  API-CRUD
 ############################################################
 
 class CocoDataset(utils.Dataset):
@@ -111,13 +111,13 @@ class CocoDataset(utils.Dataset):
         image_dir = "{}/{}{}".format(dataset_dir, subset, year)
 
         # Load all classes or a subset?
-        # 加载所有类，还是其子集
+        # 添加需要的类id，所有类，还是其子集
         if not class_ids:
             # All classes
             class_ids = sorted(coco.getCatIds())
 
         # All images or a subset?
-        # 加载所有图片，还是其子集
+        # 添加需要的图片id，还是某些类构成的子集
         if class_ids:
             image_ids = []
             for id in class_ids:
@@ -127,6 +127,8 @@ class CocoDataset(utils.Dataset):
         else:
             # All images
             image_ids = list(coco.imgs.keys())
+
+        # 根据选择出的 class-ids 和 image-ids 添加根据详细的 class-info 和 image-info
 
         # Add classes 添加类信息 class_info
         for i in class_ids:
@@ -219,7 +221,7 @@ class CocoDataset(utils.Dataset):
     def load_mask(self, image_id):
         """Load instance masks for the given image.
         一张图片上可能有多个物体，且分属不同的类
-        image_id → instance_mask×N → class_ID×N
+        image_id → (instance_mask，class_ID)×N
 
         Different datasets use different ways to store masks. This
         function converts the different mask format to one format
@@ -249,6 +251,7 @@ class CocoDataset(utils.Dataset):
             if class_id:
                 m = self.annToMask(annotation, image_info["height"],
                                    image_info["width"])
+                # m: 2D numpy array [height, width] bool值
                 # Some objects are so small that they're less than 1 pixel area
                 # and end up rounded out. Skip those objects.
                 # 处理小物体标注
@@ -310,6 +313,7 @@ class CocoDataset(utils.Dataset):
         Convert annotation which can be polygons, uncompressed RLE, or RLE to binary mask.
         :return: binary mask (numpy 2D array)
         将行程码格式的annotation转换为二值mask
+        mask格式为：2D numpy数组 [height, wiodth] bool值
         """
         rle = self.annToRLE(ann, height, width)
         m = maskUtils.decode(rle)
@@ -322,7 +326,7 @@ class CocoDataset(utils.Dataset):
 
 def build_coco_results(dataset, image_ids, rois, class_ids, scores, masks):
     """Arrange resutls to match COCO specs in http://cocodataset.org/#format
-        按COCO数据集的官方格式，重新整理检测结果rois
+        按COCO数据集的官方格式，重新整理检测结果 -> rois
     """
     # If no results, return an empty list
     if rois is None:
@@ -350,7 +354,7 @@ def build_coco_results(dataset, image_ids, rois, class_ids, scores, masks):
 
 def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=None):
     """Runs official COCO evaluation.
-    COCO官方的评估函数
+    COCO官方的评估函数: COCOeval()
     dataset: A Dataset object with valiadtion data
     eval_type: "bbox" or "segm" for bounding box or segmentation evaluation
     limit: if not 0, it's the number of images to use for evaluation
@@ -362,7 +366,9 @@ def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=Non
     if limit:
         image_ids = image_ids[:limit]
 
-    # Get corresponding COCO image IDs.  第1个id是二次封装后的id，第2个是在源数据集中的id
+    # Get corresponding COCO image IDs.
+    # 取出该图片在COCO中的原始ID
+    # 内外两层id：第1个id是二次封装后的id，第2个"id"是在源数据集中的id
     coco_image_ids = [dataset.image_info[id]["id"] for id in image_ids]
 
     t_prediction = 0
@@ -371,23 +377,28 @@ def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=Non
     results = []
     for i, image_id in enumerate(image_ids):
         # Load image
+        # 加载图片
         image = dataset.load_image(image_id)
 
         # Run detection
+        # 运行检测
         t = time.time()
         r = model.detect([image], verbose=0)[0]
         t_prediction += (time.time() - t)
 
         # Convert results to COCO format
+        # 一张图片上的检测结果包含 [rois, class_ids, scores, masks]
         image_results = build_coco_results(dataset, coco_image_ids[i:i + 1],
                                            r["rois"], r["class_ids"],
                                            r["scores"], r["masks"])
         results.extend(image_results)
 
     # Load results. This modifies results with additional attributes.
+    # 将结果转换位COCO指定格式
     coco_results = coco.loadRes(results)
 
     # Evaluate
+    # 运行COCO评估
     cocoEval = COCOeval(coco, coco_results, eval_type)
     cocoEval.params.imgIds = coco_image_ids
     cocoEval.evaluate()
@@ -408,6 +419,7 @@ if __name__ == '__main__':
     import argparse
 
     # Parse command line arguments
+    # 1、参数解析
     parser = argparse.ArgumentParser(
         description='Train Mask R-CNN on MS COCO.')
     parser.add_argument("command",
@@ -445,6 +457,7 @@ if __name__ == '__main__':
     print("Auto Download: ", args.download)
 
     # Configurations
+    # 超参数配置
     if args.command == "train":
         config = CocoConfig()
     else:
@@ -458,6 +471,7 @@ if __name__ == '__main__':
     config.display()
 
     # Create model
+    # 模型创建
     if args.command == "train":
         model = modellib.MaskRCNN(mode="training", config=config,
                                   model_dir=args.logs)
@@ -466,6 +480,7 @@ if __name__ == '__main__':
                                   model_dir=args.logs)
 
     # Select weights file to load
+    # 预训练模型加载
     if args.model.lower() == "coco":
         model_path = COCO_MODEL_PATH
     elif args.model.lower() == "last":
@@ -482,6 +497,7 @@ if __name__ == '__main__':
     model.load_weights(model_path, by_name=True)
 
     # Train or evaluate
+    # 训练
     if args.command == "train":
         # Training dataset. Use the training set and 35K from the
         # validation set, as as in the Mask RCNN paper.
@@ -522,6 +538,7 @@ if __name__ == '__main__':
                     epochs=160,
                     layers='all')
 
+    # 评估
     elif args.command == "evaluate":
         # Validation dataset
         # 声明COCO数据集

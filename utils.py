@@ -161,6 +161,7 @@ def apply_box_deltas(boxes, deltas):
 def box_refinement_graph(box, gt_box):
     """Compute refinement needed to transform box to gt_box.
     box and gt_box are [N, (y1, x1, y2, x2)]
+    计算将box变换到gt_box的修正量 (dy dx dh dw)
     """
     box = tf.cast(box, tf.float32)
     gt_box = tf.cast(gt_box, tf.float32)
@@ -237,26 +238,27 @@ class Dataset(object):
     def __init__(self, class_map=None):
         self._image_ids = []
         self.image_info = []
-        # Background is always the first class #背景始终是第一类
-        self.class_info = [{"source": "", "id": 0, "name": "BG"}]  #默认有背景类 BG
+        # Background is always the first class #背景始终是第一类 #默认有背景类 BG
+        # 此处的class_info.id 是该类在原始source中的id
+        self.class_info = [{"source": "", "id": 0, "name": "BG"}]
         self.source_class_ids = {}
 
     # 添加类信息
     def add_class(self, source, class_id, class_name):
         assert "." not in source, "Source name cannot contain a dot"
-        # Does the class exist already?
+        # Does the class exist already? #跳过已存在的类
         for info in self.class_info:
             if info['source'] == source and info["id"] == class_id:
                 # source.class_id combination already available, skip
                 return
-        # Add the class #添加其他类到类信息字典中
+        # Add the class #添加首次出现的类
         self.class_info.append({
             "source": source,
             "id": class_id,
             "name": class_name,
         })
 
-    # 添加图片信息
+    # 添加图片信息  img的id有2层，外层id是该图片在[image_info,……]中的索引id,内层id是其在源数据集image_info中的id，
     def add_image(self, source, image_id, path, **kwargs):
         image_info = {
             "id": image_id,
@@ -573,8 +575,8 @@ def generate_pyramid_anchors(scales, ratios, feature_shapes, feature_strides,
     is associated with a level of the pyramid, but each ratio is used in
     all levels of the pyramid.
 
-    在特征金字塔上生成锚点图。
-    每个scale都与金字塔中的一个level相互对应，但每个ration可以应用在各个level上
+    在特征金字塔的各层上生成锚点图。
+    每个scale都与金字塔中的一个level相互对应，但每个ration可以应用在各个level上。
 
     Returns:
     anchors: [N, (y1, x1, y2, x2)]. All generated anchors in one array. Sorted
