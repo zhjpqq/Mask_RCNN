@@ -450,7 +450,7 @@ class PyramidROIAlign(KE.Layer):
 
         # Feature Maps. List of feature maps from different level of the
         # feature pyramid. Each is [batch, height, width, channels]
-        # 特征金字塔不同层级的特征图构成的特征图列表。
+        # 特征金字塔不同层级的特征图构成的特征图列表。[P2~P5]
         # batch:每批图像的数量，h,w是金字塔各层级的高宽，channels应该是金字塔级数。
         feature_maps = inputs[1:]
 
@@ -465,8 +465,7 @@ class PyramidROIAlign(KE.Layer):
         image_area = tf.cast(
             self.image_shape[0] * self.image_shape[1], tf.float32)
         roi_level = log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
-        roi_level = tf.minimum(5, tf.maximum(
-            2, 4 + tf.cast(tf.round(roi_level), tf.int32))) # 层级限定 2-5
+        roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32))) # 层级限定 2-5
         roi_level = tf.squeeze(roi_level, 2)
 
         # Loop through levels and apply ROI pooling to each. P2 to P5.
@@ -520,8 +519,7 @@ class PyramidROIAlign(KE.Layer):
         # 重排池化特征，以匹配原始boxes的顺序。
         # 对 box_to_level 先按batch排序，再按box index排序
         sorting_tensor = box_to_level[:, 0] * 100000 + box_to_level[:, 1]
-        ix = tf.nn.top_k(sorting_tensor, k=tf.shape(
-            box_to_level)[0]).indices[::-1]
+        ix = tf.nn.top_k(sorting_tensor, k=tf.shape(box_to_level)[0]).indices[::-1]
         ix = tf.gather(box_to_level[:, 2], ix)
         pooled = tf.gather(pooled, ix)  # 安装ix顺序重排pooled
 
@@ -999,7 +997,7 @@ def build_fpn_mask_graph(rois, feature_maps,
     # ROI Pooling
     # Shape: [batch, boxes, pool_height, pool_width, channels]
     x = PyramidROIAlign([pool_size, pool_size], image_shape,
-                        name="roi_align_mask")([rois] + feature_maps)
+                        name="roi_align_mask")([rois] + feature_maps) # ????
 
     # Conv layers
     x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
