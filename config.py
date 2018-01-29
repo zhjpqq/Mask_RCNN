@@ -23,6 +23,7 @@ class Config(object):
     # Name the configurations. For example, 'COCO', 'Experiment 3', ...etc.
     # Useful if your code needs to do things differently depending on which
     # experiment is running.
+    # 当前实验或数据的名称，COCO-Exp1
     NAME = None  # Override in sub-classes
 
     # NUMBER OF GPUs to use. For CPU training, use 1
@@ -32,15 +33,22 @@ class Config(object):
     # handle 2 images of 1024x1024px.
     # Adjust based on your GPU memory and image sizes. Use the highest
     # number that your GPU can handle for best performance.
+    # 每个GPU上可训练的图片数量
     IMAGES_PER_GPU = 2
 
     # Number of training steps per epoch
+    # 每个epoch需要的训练steps
     # This doesn't need to match the size of the training set. Tensorboard
     # updates are saved at the end of each epoch, so setting this to a
     # smaller number means getting more frequent TensorBoard updates.
     # Validation stats are also calculated at each epoch end and they
     # might take a while, so don't set this too small to avoid spending
     # a lot of time on validation stats.
+    # 这不需要匹配训练集的Size.
+    # Tensorboard的更新在每个epoch结束时进行保存，所以此值设置的越小，TBoard的更新频率就越高。
+    # 验证统计也在每个epoch结束时进行，且需要耗费一定时间。所以，此值不能设置的太小，
+    # 以免在验证统计上花费过多时间。
+    # TRAIN_STEPS_PER_EPOCH
     STEPS_PER_EPOCH = 1000
 
     # Number of validation steps to run at the end of every training epoch.
@@ -50,36 +58,47 @@ class Config(object):
 
     # The strides of each layer of the FPN Pyramid. These values
     # are based on a Resnet101 backbone.
+    # FPN金字塔中每一层的步长，与Resnet101这个backbone有关。
+    # todo ？每个stage后，图片尺寸相对原图的缩小倍数
+    # 根据原图shape可算出backbone的shape
+    # Stride of the feature map relative to the image in pixels.
     BACKBONE_STRIDES = [4, 8, 16, 32, 64]
 
     # Number of classification classes (including background)
     NUM_CLASSES = 1  # Override in sub-classes
 
     # Length of square anchor side in pixels
+    # RPN网络所生成的锚点框的基准边长 proposals的边长=SALES*RATIOS
     RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
 
     # Ratios of anchors at each cell (width/height)
     # A value of 1 represents a square anchor, and 0.5 is a wide anchor
+    # RPN网络所生成的锚点框的形状
     RPN_ANCHOR_RATIOS = [0.5, 1, 2]
 
     # Anchor stride
     # If 1 then anchors are created for each cell in the backbone feature map.
     # If 2, then anchors are created for every other cell, and so on.
+    # 在backbone特征图上创建anchor的步长。cell：np.meshgrid()生成
     RPN_ANCHOR_STRIDE = 1
 
     # Non-max suppression threshold to filter RPN proposals.
     # You can reduce this during training to generate more propsals.
+    # 过滤RPN建议区的NMS阈值
     RPN_NMS_THRESHOLD = 0.7
 
     # How many anchors per image to use for RPN training
+    # 每张图片上用于RPN训练的anchors, 用于限制proposal-bbox的数量
     RPN_TRAIN_ANCHORS_PER_IMAGE = 256
 
     # ROIs kept after non-maximum supression (training and inference)
+    # NMS后保留下来的ROIs数量
     POST_NMS_ROIS_TRAINING = 2000
     POST_NMS_ROIS_INFERENCE = 1000
 
     # If enabled, resizes instance masks to a smaller size to reduce
     # memory load. Recommended when using high-resolution images.
+    # 使用小尺寸掩膜，以降低尺寸
     USE_MINI_MASK = True
     MINI_MASK_SHAPE = (56, 56)  # (height, width) of the mini-mask
 
@@ -87,6 +106,7 @@ class Config(object):
     # Images are resized such that the smallest side is >= IMAGE_MIN_DIM and
     # the longest side is <= IMAGE_MAX_DIM. In case both conditions can't
     # be satisfied together the IMAGE_MAX_DIM is enforced.
+    # 输入图片的尺寸规定
     IMAGE_MIN_DIM = 800
     IMAGE_MAX_DIM = 1024
     # If True, pad images with zeros such that they're (max_dim by max_dim)
@@ -100,20 +120,30 @@ class Config(object):
     # enough positive proposals to fill this and keep a positive:negative
     # ratio of 1:3. You can increase the number of proposals by adjusting
     # the RPN NMS threshold.
+    # 每张图片上喂入cls/mask头的ROIs数量
     TRAIN_ROIS_PER_IMAGE = 200
 
     # Percent of positive ROIs used to train classifier/mask heads
+    # 喂入cls/mask头的正ROIs的数量百分比
     ROI_POSITIVE_RATIO = 0.33
 
     # Pooled ROIs
+    # POOL_SIZE ：The width of the square feature map generated from ROI Pooling.
+    # 用在 fpn_classifier_graph() → PyramidROIAlign
+    # MASK_POOL_SIZE ：The width of the square feature map generated from ROI Pooling.
+    # 用在 build_fpn_mask_graph() → PyramidROIAlign
+    # MASK_SHAPE ：crop_and_resize，#从roi_masks中切出boxes，再bilinear-resize到config.MASK_SHAPE大小
+    # 用于为特定的类生产目标掩膜 Generate class-specific target masks.
     POOL_SIZE = 7
     MASK_POOL_SIZE = 14
     MASK_SHAPE = [28, 28]
 
     # Maximum number of ground truth instances to use in one image
+    # 每张图片上所使用的最大GT-instances数量
     MAX_GT_INSTANCES = 100
 
     # Bounding box refinement standard deviation for RPN and final detections.
+    # Bbox精调标准差
     RPN_BBOX_STD_DEV = np.array([0.1, 0.1, 0.2, 0.2])
     BBOX_STD_DEV = np.array([0.1, 0.1, 0.2, 0.2])
 
@@ -122,9 +152,12 @@ class Config(object):
 
     # Minimum probability value to accept a detected instance
     # ROIs below this threshold are skipped
+    # 接受一个ROIs的最小置信概率，低于此值将被略过
+    # 用于过滤proposals → refine_detections()
     DETECTION_MIN_CONFIDENCE = 0.7
 
     # Non-maximum suppression threshold for detection
+    # 用于过滤proposals → refine_detections()
     DETECTION_NMS_THRESHOLD = 0.3
 
     # Learning rate and momentum
@@ -142,6 +175,7 @@ class Config(object):
     # the head branches on ROI generated by code rather than the ROIs from
     # the RPN. For example, to debug the classifier head without having to
     # train the RPN.
+    # 调试时跳过RPN阶段，使用随机生成的ROIs.
     USE_RPN_ROIS = True
 
     def __init__(self):
@@ -154,6 +188,7 @@ class Config(object):
             [self.IMAGE_MAX_DIM, self.IMAGE_MAX_DIM, 3])
 
         # Compute backbone size from input image size
+        # 1024/[4, 8, 16, 32, 64] =[256, 128, 64, 32, 16]
         self.BACKBONE_SHAPES = np.array(
             [[int(math.ceil(self.IMAGE_SHAPE[0] / stride)),
               int(math.ceil(self.IMAGE_SHAPE[1] / stride))]

@@ -530,11 +530,15 @@ def generate_anchors(scales, ratios, shape, feature_stride, anchor_stride):
     ratios: 1D array of anchor ratios of width/height. Example: [0.5, 1, 2]
     shape: [height, width] spatial shape of the feature map over which
             to generate anchors.
+            feature_shape
+            # config中指定，FPN参数
     feature_stride: Stride of the feature map relative to the image in pixels.
+            # config中指定，FPN参数
     anchor_stride: Stride of anchors on the feature map. For example, if the
         value is 2 then generate anchors for every other feature map pixel.
+            # config中指定，RPN参数
 
-    在特征图上生成锚点框
+    在特征图上生成锚点框，在FPN上的RPN过程。
     """
     # Get all combinations of scales and ratios
     # 获取所有scale和ratios的组合
@@ -543,13 +547,17 @@ def generate_anchors(scales, ratios, shape, feature_stride, anchor_stride):
     ratios = ratios.flatten()
 
     # Enumerate heights and widths from scales and ratios
-    # scale是方图的尺寸，再乘/除ration系数，即可变成各个形状
-    # 为确保width/height = ratio，ration要取根号
+    # scale是方形锚点框的尺寸，再乘/除ration系数，即可变成各个形状
+    # 为确保width/height = ratio，要取根号凑公式
     heights = scales / np.sqrt(ratios)
     widths = scales * np.sqrt(ratios)
 
     # Enumerate shifts in feature space
-    # ?×freature_stride 缩放回原图大小？？
+    # ?×freature_stride 缩放回原图大小??
+    # 在[0 ~~ feature_shape]之间，每隔anchor_stride生成一个点；
+    # 再×feature_stride。#todo 等于把操作变回原图之上？？即：
+    # → 在[0 ~~ image_shape]之间，每隔feature_stride生成一个点。
+    # FPN中每个level对应一个scale,一个feature_shape,一个feature_stride，多个ratios
     shifts_y = np.arange(0, shape[0], anchor_stride) * feature_stride
     shifts_x = np.arange(0, shape[1], anchor_stride) * feature_stride
     shifts_x, shifts_y = np.meshgrid(shifts_x, shifts_y)
@@ -575,8 +583,20 @@ def generate_pyramid_anchors(scales, ratios, feature_shapes, feature_strides,
     is associated with a level of the pyramid, but each ratio is used in
     all levels of the pyramid.
 
-    在特征金字塔的各层上生成锚点图。
+    在特征金字塔的各层上生成锚点框。
+    特征金字塔由FPN构造，而锚点框由RPN构造：FPN + RPN。
+    所以，两个网络的参数都需要。
+
     每个scale都与金字塔中的一个level相互对应，但每个ration可以应用在各个level上。
+
+    RPN参数：
+    scalese:        config.RPN_ANCHOR_SCALES  (32, 64, 128, 256, 512)
+    ratios:         config.RPN_ANCHOR_RATIOS  [0.5, 1, 2]
+    anchor_stride:  config.RPN_ANCHOR_STRIDE  1 or 2
+
+    FPN参数：
+    feature_shapes:  config.BACKBONE_SHAPES
+    feature_strides: config.BACKBONE_STRIDES  [4, 8, 16, 32, 64]
 
     Returns:
     anchors: [N, (y1, x1, y2, x2)]. All generated anchors in one array. Sorted

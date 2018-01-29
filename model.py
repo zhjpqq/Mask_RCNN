@@ -456,7 +456,7 @@ class PyramidROIAlign(KE.Layer):
 
         # Assign each ROI to a level in the pyramid based on the ROI area.
         # 基于ROI的面积，分配(映射)每个ROI到金字塔的一个层级上.
-        # 面积大的ROI分配到面积大的层级，小的分配到小的。
+        # 面积大的ROI分配到面积大的层级，小的分配到小的.
         y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)
         h = y2 - y1
         w = x2 - x1
@@ -885,7 +885,7 @@ def refine_detections(rois, probs, deltas, window, config):
 class DetectionLayer(KE.Layer):
     """Takes classified proposal boxes and their bounding box deltas and
     returns the final detection boxes.
-    基于分类后的proposal boxes和bbxd, 返回最终的box
+    基于分类后的proposal boxes和bboxd, 返回最终的box
 
     Returns:
     [batch, num_detections, (y1, x1, y2, x2, class_score)] in pixels
@@ -1694,11 +1694,11 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
 
     # Anchors
     # [anchor_count, (y1, x1, y2, x2)]  以对角坐标表示的锚点图(Proposals)
-    anchors = utils.generate_pyramid_anchors(config.RPN_ANCHOR_SCALES,  #锚点图的尺度
-                                             config.RPN_ANCHOR_RATIOS,  #锚点图的形状  长宽方
-                                             config.BACKBONE_SHAPES,    #特征图的大小
-                                             config.BACKBONE_STRIDES,   #特征图相对于图像的步长？
-                                             config.RPN_ANCHOR_STRIDE)  #锚点图在特征图上的步长？
+    anchors = utils.generate_pyramid_anchors(config.RPN_ANCHOR_SCALES,  #锚点框的边长
+                                             config.RPN_ANCHOR_RATIOS,  #锚点框的形状  长宽方
+                                             config.BACKBONE_SHAPES,
+                                             config.BACKBONE_STRIDES,
+                                             config.RPN_ANCHOR_STRIDE)  #锚点框在特征图上的步长
 
     # Keras requires a generator to run indefinately.
     while True:
