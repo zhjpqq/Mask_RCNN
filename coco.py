@@ -394,11 +394,11 @@ def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=Non
         results.extend(image_results)
 
     # Load results. This modifies results with additional attributes.
-    # 将结果转换位COCO指定格式
+    # 将检测结果转换为COCO指定格式
     coco_results = coco.loadRes(results)
 
     # Evaluate
-    # 运行COCO评估
+    # 对检测结果，运行COCO评估
     cocoEval = COCOeval(coco, coco_results, eval_type)
     cocoEval.params.imgIds = coco_image_ids
     cocoEval.evaluate()
@@ -509,6 +509,7 @@ if __name__ == '__main__':
         dataset_train.prepare()
 
         # Validation dataset
+        # 只用val中的minival作为验证集，其他val部分(valminusminival)与train合并，用于训练
         dataset_val = CocoDataset()
         dataset_val.load_coco(args.dataset, "minival", year=args.year, auto_download=args.download)
         dataset_val.prepare()

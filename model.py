@@ -421,7 +421,7 @@ def log2_graph(x):
 
 class PyramidROIAlign(KE.Layer):
     """Implements ROI Pooling on multiple levels of the feature pyramid.
-    在特征金字塔上做ROI池化
+    在特征金字塔上做ROI池化，crop Feature maps by rois → bilinear resize ro pool_shape
     Params:
     - pool_shape: [height, width] of the output pooled regions. Usually [7, 7] 输出的池化区域，通常[7,7]
     - image_shape: [height, width, chanells]. Shape of input image in pixels 输入图像的尺寸[h,w,c]
@@ -451,11 +451,12 @@ class PyramidROIAlign(KE.Layer):
         # Feature Maps. List of feature maps from different level of the
         # feature pyramid. Each is [batch, height, width, channels]
         # 特征金字塔不同层级的特征图构成的特征图列表。[P2~P5]
-        # batch:每批图像的数量，h,w是金字塔各层级的高宽，channels应该是金字塔级数。
+        # batch:每批图像的数量，h,w是金字塔各层级的高宽，channels是Px的通道数。
         feature_maps = inputs[1:]
 
         # Assign each ROI to a level in the pyramid based on the ROI area.
-        # 基于ROI面积，分配每个ROI到金字塔的一个层级上.
+        # 基于ROI的面积，分配(映射)每个ROI到金字塔的一个层级上.
+        # 面积大的ROI分配到面积大的层级，小的分配到小的。
         y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)
         h = y2 - y1
         w = x2 - x1
@@ -471,12 +472,15 @@ class PyramidROIAlign(KE.Layer):
         # Loop through levels and apply ROI pooling to each. P2 to P5.
         # 在各层上循环，并对每一层使用ROI池化. P2-P5层.
         pooled = [] # 池化后的特征图
-        box_to_level = []
+        box_to_level = [] # box-to-level的对应关系
         for i, level in enumerate(range(2, 6)):
+
+            # 把当前level上的boxes取出来
             ix = tf.where(tf.equal(roi_level, level))
             level_boxes = tf.gather_nd(boxes, ix)
 
             # Box indicies for crop_and_resize.
+            # 将这些boxes的索引保存起来
             box_indices = tf.cast(ix[:, 0], tf.int32)
 
             # Keep track of which box is mapped to which level
@@ -488,7 +492,7 @@ class PyramidROIAlign(KE.Layer):
             level_boxes = tf.stop_gradient(level_boxes)
             box_indices = tf.stop_gradient(box_indices)
 
-            # Crop and Resize 裁剪和缩放
+            # Crop and Resize 裁剪和缩放 双线性插值
             # From Mask R-CNN paper: "We sample four regular locations, so
             # that we can evaluate either max or average pooling. In fact,
             # interpolating only a single value at each bin center (without
@@ -502,12 +506,12 @@ class PyramidROIAlign(KE.Layer):
                 method="bilinear"))
 
         # Pack pooled features into one tensor
-        # 将池化后的特征s装到一个tensor中
+        # 将池化后的特征装到一个tensor中
         pooled = tf.concat(pooled, axis=0)
 
         # Pack box_to_level mapping into one array and add another
         # column representing the order of pooled boxes
-        # 将 box_to_level映射拼接到一个array中，并增加一列以反映其顺序
+        # 将 box_to_level 映射拼接到一个array中，并增加一列以反映其顺序
         box_to_level = tf.concat(box_to_level, axis=0)  #列表转数组
         box_range = tf.expand_dims(tf.range(tf.shape(box_to_level)[0]), 1)  # N×1维
         box_to_level = tf.concat([tf.cast(box_to_level, tf.int32), box_range], # N×2维
@@ -928,7 +932,7 @@ def fpn_classifier_graph(rois, feature_maps,
                          image_shape, pool_size, num_classes):
     """Builds the computation graph of the feature pyramid network classifier
     and regressor heads.
-    构建FPN的计算图，包含分类头、回归头
+    构建FPN的计算图，包含分类头、回归头，输出分类预测、回归预测
 
     rois: [batch, num_rois, (y1, x1, y2, x2)] Proposal boxes in normalized
           coordinates.
@@ -962,13 +966,13 @@ def fpn_classifier_graph(rois, feature_maps,
     shared = KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 3), 2),
                        name="pool_squeeze")(x)
 
-    # Classifier head  分类头
+    # Classifier head  分类头  1024×num_classes
     mrcnn_class_logits = KL.TimeDistributed(KL.Dense(num_classes),
                                             name='mrcnn_class_logits')(shared)
     mrcnn_probs = KL.TimeDistributed(KL.Activation("softmax"),
                                      name="mrcnn_class")(mrcnn_class_logits)
 
-    # BBox head  检测头
+    # BBox head  检测头 1024×(num_classes *4)
     # [batch, boxes, num_classes * (dy, dx, log(dh), log(dw))] 80*4=320
     x = KL.TimeDistributed(KL.Dense(num_classes * 4, activation='linear'),
                            name='mrcnn_bbox_fc')(shared)
@@ -2010,7 +2014,7 @@ class MaskRCNN():
                     target_rois, input_gt_class_ids, gt_boxes, input_gt_masks])
 
             # Network Heads 添加网络头部
-            # 分类头 检测头 分割头 都基于 mrcnn_feature_maps，rois 进行工作
+            # 分类头 检测头 分割头 都基于 mrcnn_feature_maps P2~P5 + rois 进行工作
             # TODO: verify that this handles zero padded ROIs
             mrcnn_class_logits, mrcnn_class, mrcnn_bbox =\
                 fpn_classifier_graph(rois, mrcnn_feature_maps, config.IMAGE_SHAPE,
@@ -2281,7 +2285,7 @@ class MaskRCNN():
 
     def train(self, train_dataset, val_dataset, learning_rate, epochs, layers):
         """Train the model.
-        在数据集上训练模型，指定训练速率 训练回合数 训练层数
+        在数据集上训练模型，指定训练数据集，训练学习率 训练回合数 训练层数
         train_dataset, val_dataset: Training and validation Dataset objects.
         learning_rate: The learning rate to train with
         epochs: Number of training epochs. Note that previous training epochs
