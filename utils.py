@@ -57,6 +57,7 @@ def extract_bboxes(mask):
 
 def compute_iou(box, boxes, box_area, boxes_area):
     """Calculates IoU of the given box with the array of the given boxes.
+    计算一个box与一组boxes的IoU值。
     box: 1D vector [y1, x1, y2, x2]
     boxes: [boxes_count, (y1, x1, y2, x2)]
     box_area: float. the area of 'box'
@@ -84,6 +85,7 @@ def compute_overlaps(boxes1, boxes2):
     For better performance, pass the largest set first and the smaller second.
     """
     # Areas of anchors and GT boxes
+    # anchors 和 GT boxes自身的面积
     area1 = (boxes1[:, 2] - boxes1[:, 0]) * (boxes1[:, 3] - boxes1[:, 1])
     area2 = (boxes2[:, 2] - boxes2[:, 0]) * (boxes2[:, 3] - boxes2[:, 1])
 
@@ -222,7 +224,7 @@ class Dataset(object):
     """The base class for dataset classes.
     To use it, create a new class that adds functions specific to the dataset
     you want to use. For example:
-    数据模型的基类，可继承后构建自己的数据集，如COCODataset，ShapeDataset
+    数据集基类，可继承后构建自己的数据集，如COCODataset，ShapeDataset
 
     class CatsAndDogsDataset(Dataset):
         def load_cats_and_dogs(self):
@@ -238,8 +240,8 @@ class Dataset(object):
     def __init__(self, class_map=None):
         self._image_ids = []
         self.image_info = []
-        # Background is always the first class #背景始终是第一类 #默认有背景类 BG
-        # 此处的class_info.id 是该类在原始source中的id
+        # Background is always the first class #背景始终是第一类 #所有source中都默认添加背景类 BG
+        # 此处的class_info[idx].id，idx是该类在新构造的Dataset中的index, 而id是该类在原始source中的index
         self.class_info = [{"source": "", "id": 0, "name": "BG"}]
         self.source_class_ids = {}
 
@@ -258,7 +260,8 @@ class Dataset(object):
             "name": class_name,
         })
 
-    # 添加图片信息  img的id有2层，外层id是该图片在[image_info,……]中的索引id,内层id是其在源数据集image_info中的id，
+    # 添加图片信息 add the info of image to image_info
+    # img的id有2层，外层id是该图片在[image_info,……]中的索引id,内层id是其在源数据集image_info中的id，
     def add_image(self, source, image_id, path, **kwargs):
         image_info = {
             "id": image_id,
@@ -292,14 +295,15 @@ class Dataset(object):
             return ",".join(name.split(",")[:1])
 
         # Build (or rebuild) everything else from the info dicts.
-        # 从信息字典 info dicts 中构建相关信息
+        # 从信息字典 info dicts 中构建相关信息 class-id,image-id可能发生变换
         self.num_classes = len(self.class_info)
         self.class_ids = np.arange(self.num_classes)
         self.class_names = [clean_name(c["name"]) for c in self.class_info]
         self.num_images = len(self.image_info)
         self._image_ids = np.arange(self.num_images)
 
-        # 将源数据集的类别ID与新数据集的类别ID进行关联，源数据集可能源自多个数据集，如VOC,IMAGENET,COCO
+        # 将源数据集的类别ID与新数据集的类别ID进行关联，源数据集可能是多个不同数据集，
+        # 如{"{VOC}.{1}":0,"{ImageNet}.{22}":1,"{COCO}.{9}":2,……}
         self.class_from_source_map = {"{}.{}".format(info['source'], info['id']): id
                                       for info, id in zip(self.class_info, self.class_ids)}
 
@@ -317,7 +321,7 @@ class Dataset(object):
                 if i == 0 or source == info['source']:
                     self.source_class_ids[source].append(i)
 
-    # 映射 源数据集.类标 到 新数据集类标
+    # 映射 源数据集.类标 → 新数据集类标
     def map_source_class_id(self, source_class_id):
         """Takes a source class ID and returns the int class ID assigned to it.
 
@@ -333,7 +337,7 @@ class Dataset(object):
         assert info['source'] == source
         return info['id']
 
-    # 增加额外数据集
+    # 增加额外数据集 递归增加++
     def append_data(self, class_info, image_info):
         self.external_to_class_id = {}
         for i, c in enumerate(self.class_info):
@@ -374,8 +378,10 @@ class Dataset(object):
         Different datasets use different ways to store masks. Override this
         method to load instance masks and return them in the form of am
         array of binary masks of shape [height, width, instances].
-        不同数据集使用不同方法来存储masks.重载此方法，按需要的格式加载masks。
+        不同数据集使用不同方法来存储masks.对各个数据集，需要重载此方法，按对应的格式加载masks。
         image上的每个instance都有一个 h×w的二值掩膜，每个image上有多个instance。
+
+        masks: [1/0二值] 构成的binary bool数组
 
         Returns:
             masks: A bool array of shape [height, width, instance count] with
@@ -406,7 +412,7 @@ def resize_image(image, min_dim=None, max_dim=None, padding=False):
         be inserted in the returned image. If so, this window is the
         coordinates of the image part of the full image (excluding
         the padding). The x2, y2 pixels are not included.
-        填0之后的图像上的真正图像部分，原始图像在其上可能是个窗口
+        填0之后的图像上的真正图像部分，保持原始图像部分的形状填零，原始图像小于缩放图像。
     scale: The scale factor used to resize the image
     padding: Padding added to the image [(top, bottom), (left, right), (0, 0)]
     """
@@ -415,6 +421,9 @@ def resize_image(image, min_dim=None, max_dim=None, padding=False):
     window = (0, 0, h, w)
     scale = 1
 
+    # 要么按最小边限定值缩放，要么按最大边限定值缩放
+    # 当按最小边限制值缩放时，可能超过最大边限定值，则使用最大边限定值缩放
+    # 边长最小不能小于多少，做大不能大于多少，不能同时满足时，按"大"约定走
     # Scale?
     if min_dim:
         # Scale up but not down
@@ -446,14 +455,15 @@ def resize_mask(mask, scale, padding):
     """Resizes a mask using the given scale and padding.
     Typically, you get the scale and padding from resize_image() to
     ensure both, the image and the mask, are resized consistently.
-    从resize_image中获取scale和padding参数，确保image和mask的一致性
+
+    从resize_image()中获取scale和padding参数，确保image和mask的一致性
 
     scale: mask scaling factor
     padding: Padding to add to the mask in the form
             [(top, bottom), (left, right), (0, 0)]
     """
     h, w = mask.shape[:2]
-    mask = scipy.ndimage.zoom(mask, zoom=[scale, scale, 1], order=0)
+    mask = scipy.ndimage.zoom(mask, zoom=[scale, scale, 1], order=0) #最近邻插值
     mask = np.pad(mask, padding, mode='constant', constant_values=0)
     return mask
 
@@ -463,6 +473,8 @@ def minimize_mask(bbox, mask, mini_shape):
     Mini-masks can then resized back to image scale using expand_masks()
 
     将mask缩放到小尺寸以节约内存，可以 expand_masks()返回去
+
+    在掩膜上按bbox大小裁切 → 再将裁切块缩放到mini_shape
 
     See inspect_data.ipynb notebook for more details.
     """
@@ -529,8 +541,7 @@ def generate_anchors(scales, ratios, shape, feature_stride, anchor_stride):
     scales: 1D array of anchor sizes in pixels. Example: [32, 64, 128]
     ratios: 1D array of anchor ratios of width/height. Example: [0.5, 1, 2]
     shape: [height, width] spatial shape of the feature map over which
-            to generate anchors.
-            feature_shape
+            to generate anchors.   feature_shape
             # config中指定，FPN参数
     feature_stride: Stride of the feature map relative to the image in pixels.
             # config中指定，FPN参数
@@ -540,6 +551,8 @@ def generate_anchors(scales, ratios, shape, feature_stride, anchor_stride):
 
     在特征图上生成锚点框，在FPN上的RPN过程。
     """
+    # 第一步：生成h,w
+
     # Get all combinations of scales and ratios
     # 获取所有scale和ratios的组合
     scales, ratios = np.meshgrid(np.array(scales), np.array(ratios))
@@ -552,15 +565,19 @@ def generate_anchors(scales, ratios, shape, feature_stride, anchor_stride):
     heights = scales / np.sqrt(ratios)
     widths = scales * np.sqrt(ratios)
 
+    # 第二步：生成shifts_x,shift_y
+
     # Enumerate shifts in feature space
-    # ?×freature_stride 缩放回原图大小??
+    # shifts指锚点框的左上角相对于中心点的偏移量
     # 在[0 ~~ feature_shape]之间，每隔anchor_stride生成一个点；
     # 再×feature_stride。#todo 等于把操作变回原图之上？？即：
-    # → 在[0 ~~ image_shape]之间，每隔feature_stride生成一个点。
-    # FPN中每个level对应一个scale,一个feature_shape,一个feature_stride，多个ratios
+    # 等效于 → 在[0 ~~ image_shape]之间，每隔anchor_stride*feature_stride生成一个点。
     shifts_y = np.arange(0, shape[0], anchor_stride) * feature_stride
     shifts_x = np.arange(0, shape[1], anchor_stride) * feature_stride
     shifts_x, shifts_y = np.meshgrid(shifts_x, shifts_y)
+
+    # 第三步：组合坐标+长宽对 w,shifts_x; h,shifts_y
+    # todo 角点偏移量变换为中心坐标?? box_centers_x其实还是角点值
 
     # Enumerate combinations of shifts, widths, and heights
     box_widths, box_centers_x = np.meshgrid(widths, shifts_x)
@@ -570,6 +587,8 @@ def generate_anchors(scales, ratios, shape, feature_stride, anchor_stride):
     box_centers = np.stack(
         [box_centers_y, box_centers_x], axis=2).reshape([-1, 2])
     box_sizes = np.stack([box_heights, box_widths], axis=2).reshape([-1, 2])
+
+    # 第四步：中心坐标+长宽 变换为 对角顶点坐标
 
     # Convert to corner coordinates (y1, x1, y2, x2)
     boxes = np.concatenate([box_centers - 0.5 * box_sizes,
@@ -587,7 +606,12 @@ def generate_pyramid_anchors(scales, ratios, feature_shapes, feature_strides,
     特征金字塔由FPN构造，而锚点框由RPN构造：FPN + RPN。
     所以，两个网络的参数都需要。
 
+    调用点1：在model.bulid()时调用，
+    调用点2：在data_generator()中调用，
+    两处都传入同样的confg参数，生成同样的anchors.
+
     每个scale都与金字塔中的一个level相互对应，但每个ration可以应用在各个level上。
+    RPN中的scalese 与 FPN中的feature_shapes 一一对应。
 
     RPN参数：
     scalese:        config.RPN_ANCHOR_SCALES  (32, 64, 128, 256, 512)
@@ -632,6 +656,9 @@ def compute_ap(gt_boxes, gt_class_ids,
                iou_threshold=0.5):
     """Compute Average Precision at a set IoU threshold (default 0.5).
     在给定的IOU阈值下计算平均精度mAP
+
+    预测 → [box, class-id, pred-score] × N
+    基准 → [box, class-id] × M
 
     Returns:
     mAP: Mean Average Precision
@@ -699,7 +726,7 @@ def compute_ap(gt_boxes, gt_class_ids,
 def compute_recall(pred_boxes, gt_boxes, iou):
     """Compute the recall at the given IoU threshold. It's an indication
     of how many GT boxes were found by the given prediction boxes.
-    给定IoU阈值，计算recall值。即有多少GT boxes被找出来了。
+    给定IoU阈值，计算recall值。即有多少GT boxes被正确匹配，被成功召回。
 
     pred_boxes: [N, (y1, x1, y2, x2)] in image coordinates
     gt_boxes: [N, (y1, x1, y2, x2)] in image coordinates

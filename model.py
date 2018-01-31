@@ -1218,7 +1218,8 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
 def load_image_gt(dataset, config, image_id, augment=False,
                   use_mini_mask=False):
     """Load and return ground truth data for an image (image, mask, bounding boxes).
-    # 加载一张图片并返回其ground truth data: mask bbx
+    # 加载一张图片并返回其 ground truth data: mask bbox
+    # **** bbox 是从 mask 中计算出来的 ****
 
     augment: If true, apply random image augmentation. Currently, only
         horizontal flipping is offered.
@@ -1438,8 +1439,21 @@ def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, gt_masks, config):
 def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
     """Given the anchors and GT boxes, compute overlaps and identify positive
     anchors and deltas to refine them to match their corresponding GT boxes.
-    给定锚点框和GT框，计算重合度以鉴别正锚点框，并精调以使其匹配 GT框
-    将随机采出的锚点框和GTBoxes进行对比，舍弃无效锚点框，校准有效锚点框。
+
+    给定anchors锚点框和GT框，计算重合度以鉴别正锚点框，并计算匹配修正量。
+
+    1.过滤基准框gt_boxes → 2.计算重合度overlaps → 3.查找匹配框match-box（anchor-gt） → 4.计算偏移量rpn_bbox
+
+    IoU匹配挑选：将随机采出的锚点框和GTBoxes进行对比，舍弃无效锚点框，校准有效锚点框。
+
+    anchors => 从模型backbone+config中推算出的锚点框，但这些锚点框不能直接拿来训练，相当于是在特征图上均匀采样生成的随机锚点框，random_anchors。
+    gt_boxes => 从数据ground-truth-mask中抽取出的锚点框，这些锚点框是基准target.
+    初步过滤 => 根据anchors 和 gt_boxes的iou重合度，设置阈值，过滤出一部分有价值的锚点框，value_anchors.
+               基于这些锚点框，得出rpn的target: rpn_box[dy,dx,log(dh),log(dw)]
+    再加训练 => 用RPN网络对这些anchros进行训练，Loss_cls区分BG，Loss_sml1定位角点坐标，得到更有价值的锚点框，proposals_anchors。
+    再加映射 => 映射回原图 → 映射到特征图 → RoIAlign，得到更有价值的锚点框，proposal_rois
+    分支训练 => cls + bbox + mask，得到网络预测的锚点框，<img -- pred_rois[mask，corner-coordinates，class-ids，scores]>
+    再加修正 => 映射回原图 → 按cocoapi的格式，输出结果。
 
     anchors: [num_anchors, (y1, x1, y2, x2)]
     gt_class_ids: [num_gt_boxes] Integer class IDs.
@@ -1454,7 +1468,7 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
                # 根据锚点框和GT框相互比对，计算出中心偏差、长宽偏差
     """
     # RPN Match: 1 = positive anchor, -1 = negative anchor, 0 = neutral
-    # 记录anchors是否是一个好的anchor
+    # 记录anchors是否是一个好的anchor-match
     rpn_match = np.zeros([anchors.shape[0]], dtype=np.int32)
     # RPN bounding boxes: [max anchors per image, (dy, dx, log(dh), log(dw))]
     # 在好的anchors中，进一步选出好的bbox
@@ -1466,10 +1480,10 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
     # 在训练阶段排除掉物体拥挤的框，拥挤框已被手工标记为负类标，可直接筛选出来
     # 因为锚点框anchor最终要被匹配到GTbox上，如果GTbox拥挤，则anchor也会拥挤
     crowd_ix = np.where(gt_class_ids < 0)[0]
+    non_crowd_ix = np.where(gt_class_ids > 0)[0]
     if crowd_ix.shape[0] > 0:
         # Filter out crowds from ground truth class IDs and boxes
         # 筛选发现拥挤GT框时，进行计算过滤
-        non_crowd_ix = np.where(gt_class_ids > 0)[0]
         crowd_boxes = gt_boxes[crowd_ix]
         gt_class_ids = gt_class_ids[non_crowd_ix]
         gt_boxes = gt_boxes[non_crowd_ix]
@@ -1497,19 +1511,19 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
     # match it to the closest anchor (even if its max IoU is < 0.3).
     #
     # 1. Set negative anchors first. They get overwritten below if a GT box is
-    # matched to them. Skip boxes in crowd areas.
+    # matched to them. Skip boxes in crowd areas. 首先从anchors的角度过滤。
     # 低重合度的anchors==-1
     # axis=1 每个锚点anchor与哪个GTbox更重合，先取最大argmax，再取阈值0.3
-    anchor_iou_argmax = np.argmax(overlaps, axis=1)     #[num_anchors, 1]
+    anchor_iou_argmax = np.argmax(overlaps, axis=1)
     anchor_iou_max = overlaps[np.arange(overlaps.shape[0]), anchor_iou_argmax]
     rpn_match[(anchor_iou_max < 0.3) & (no_crowd_bool)] = -1
     # 2. Set an anchor for each GT box (regardless of IoU value).
-    # 每个GTbox都应该至少有一个anchor，而无论其IoU值，==1
+    # 每个GTbox都应该至少有一个anchor，而无论其IoU值，==1. 其次从GTbox的角度过滤。
     # TODO: If multiple anchors have the same IoU match all of them
-    gt_iou_argmax = np.argmax(overlaps, axis=0)         #[num_gt_boxes]
+    gt_iou_argmax = np.argmax(overlaps, axis=0)
     rpn_match[gt_iou_argmax] = 1
     # 3. Set anchors with high overlap as positive.
-    # 高重合度的anchors ==1
+    # 高重合度的anchors ==1. 最后，从anchor+GTbox的角度综合过滤。
     rpn_match[anchor_iou_max >= 0.7] = 1
 
     # Subsample to balance positive and negative anchors
@@ -1532,14 +1546,14 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
 
     # For positive anchors, compute shift and scale needed to transform them
     # to match the corresponding GT boxes.
-    # 遍历可有效匹配的anchors-box
-    # 计算正锚点anchor-box的偏移量，缩放尺度，以使其匹配GT-box
+    # 遍历正匹配的anchor-boxes
+    # 并计算其偏移量，缩放尺度，以使其匹配GT-boxes
     ids = np.where(rpn_match == 1)[0]
     ix = 0  # index into rpn_bbox
     # TODO: use box_refinment() rather than duplicating the code here
     for i, a in zip(ids, anchors[ids]):
         # Closest gt box (it might have IoU < 0.7)
-        # 取离每个anchor最近的那个GT-box,就是重合度最高的那个
+        # 取离每个anchor最近的那个GT-box,就是重合度最高的那个，但重合度不一定大于0.7
         gt = gt_boxes[anchor_iou_argmax[i]]
 
         # Convert coordinates to center plus width/height.
@@ -1555,6 +1569,7 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
         a_center_x = a[1] + 0.5 * a_w
 
         # Compute the bbox refinement that the RPN should predict.
+        # 计算RPN所要预测的bbox调节量：rpn_bbox → [dy,dx,log(dh),log(dw)]/std
         rpn_bbox[ix] = [
             (gt_center_y - a_center_y) / a_h,
             (gt_center_x - a_center_x) / a_w,
@@ -1685,7 +1700,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
     outputs list: Usually empty in regular training. But if detection_targets
         is True then the outputs list contains target class_ids, bbox deltas,
         and masks.
-        在正常训练情况下，输出为空。除非 detection_targets为True，则输出检测目标 batch×[cls,bbx,mask]
+        在正常训练情况下，输出为空。但是当detection_targets为True，则输出检测目标 batch×[cls,bbx,mask]
     """
     b = 0  # batch item index
     image_index = -1
@@ -1723,6 +1738,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                 continue
 
             # RPN Targets
+            # generate rpn targets: rpn_match, rpn_bbox
             # 为单张图片，生成RPN匹配对和bbox。一张图片可能有多个物体类，即gt_class_ids，gt_boxes是个数组
             rpn_match, rpn_bbox = build_rpn_targets(image.shape, anchors,
                                                     gt_class_ids, gt_boxes, config)
@@ -1737,7 +1753,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                             rpn_rois, gt_class_ids, gt_boxes, gt_masks, config)
 
             # Init batch arrays
-            # 初始化为零数组
+            # 初始化batch数组
             if b == 0:
                 batch_image_meta = np.zeros(
                     (batch_size,) + image_meta.shape, dtype=image_meta.dtype)
@@ -1796,8 +1812,8 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                     batch_mrcnn_mask[b] = mrcnn_mask
             b += 1
 
-            # 直到装满一个batchSize,则yield返回一个迭代器
-            # Batch full?
+            # 直到装满一个batchSize, 则yield返回一个迭代器
+            # Batch full?  batchSize = GPU_COUNT*IMAGES_PER_GPU
             if b >= batch_size:
                 inputs = [batch_images, batch_image_meta, batch_rpn_match, batch_rpn_bbox,
                           batch_gt_class_ids, batch_gt_boxes, batch_gt_masks]
@@ -1853,6 +1869,9 @@ class MaskRCNN():
         self.keras_model = self.build(mode=mode, config=config)
 
         # 后续补充的属性
+        # 由于anchors纯粹由输入图片和各层特征图的几何形状决定，而这些值由model决定，
+        # 因此anchors可以视作是model本身的一种属性，完全可从config+model中推断出来，
+        # 训练或测试过程中，只是对其进行过滤操作。
         # self.anchors == build()
 
     def build(self, mode, config):
@@ -2187,6 +2206,7 @@ class MaskRCNN():
             layer = self.keras_model.get_layer(name)
             if layer.output in self.keras_model.losses:
                 continue
+                # layer.output是该层的输出[tensors]
             self.keras_model.add_loss(
                 tf.reduce_mean(layer.output, keep_dims=True))
 
@@ -2286,6 +2306,9 @@ class MaskRCNN():
     def train(self, train_dataset, val_dataset, learning_rate, epochs, layers):
         """Train the model.
         在数据集上训练模型，指定训练数据集，训练学习率 训练回合数 训练层数
+
+        1.构造数据生成器 → 2.指定训练层 → 3.编译模型(+loss+metrics) → 4.增加回调callback → 5.开始训练 fit()
+
         train_dataset, val_dataset: Training and validation Dataset objects.
         learning_rate: The learning rate to train with
         epochs: Number of training epochs. Note that previous training epochs
@@ -2304,6 +2327,14 @@ class MaskRCNN():
         """
         assert self.mode == "training", "Create model in training mode."
 
+        # Data generators
+        # 数据 生成器
+        train_generator = data_generator(train_dataset, self.config, shuffle=True,
+                                         batch_size=self.config.BATCH_SIZE)
+        val_generator = data_generator(val_dataset, self.config, shuffle=True,
+                                       batch_size=self.config.BATCH_SIZE,
+                                       augment=False)
+
         # Pre-defined layer regular expressions
         layer_regex = {
             # all layers but the backbone
@@ -2319,13 +2350,9 @@ class MaskRCNN():
         if layers in layer_regex.keys():
             layers = layer_regex[layers]
 
-        # Data generators
-        # 数据 生成器
-        train_generator = data_generator(train_dataset, self.config, shuffle=True,
-                                         batch_size=self.config.BATCH_SIZE)
-        val_generator = data_generator(val_dataset, self.config, shuffle=True,
-                                       batch_size=self.config.BATCH_SIZE,
-                                       augment=False)
+        self.set_trainable(layers)
+
+        self.compile(learning_rate, self.config.LEARNING_MOMENTUM)
 
         # Callbacks
         callbacks = [
@@ -2338,8 +2365,6 @@ class MaskRCNN():
         # Train  设置可训练Layer、并编译模型
         log("\nStarting at epoch {}. LR={}\n".format(self.epoch, learning_rate))
         log("Checkpoint Path: {}".format(self.checkpoint_path))
-        self.set_trainable(layers)
-        self.compile(learning_rate, self.config.LEARNING_MOMENTUM)
 
         # Work-around for Windows: Keras fails on Windows when using
         # multiprocessing workers. See discussion here:
@@ -2400,6 +2425,7 @@ class MaskRCNN():
             windows.append(window)
             image_metas.append(image_meta)
         # Pack into arrays
+        # 沿着batch维度堆叠
         molded_images = np.stack(molded_images)
         image_metas = np.stack(image_metas)
         windows = np.stack(windows)
@@ -2411,6 +2437,7 @@ class MaskRCNN():
         application.
 
         对网络输出的检测结果进行格式解析，以将其用于其他位置
+        将检测结果映射回原图大小
 
         detections: [N, (y1, x1, y2, x2, class_id, score)]
         mrcnn_mask: [N, height, width, num_classes]
@@ -2440,15 +2467,16 @@ class MaskRCNN():
         h_scale = image_shape[0] / (window[2] - window[0])
         w_scale = image_shape[1] / (window[3] - window[1])
         scale = min(h_scale, w_scale)
-        shift = window[:2]  # y, x
+        shift = window[:2]  # y, x : top-left corner
         scales = np.array([scale, scale, scale, scale])
         shifts = np.array([shift[0], shift[1], shift[0], shift[1]])
 
-        # Translate bounding boxes to image domain
+        # Translate bounding boxes to image domain ??
         boxes = np.multiply(boxes - shifts, scales).astype(np.int32)
 
         # Filter out detections with zero area. Often only happens in early
         # stages of training when the network weights are still a bit random.
+        # 过滤掉面积<0的boxes
         exclude_ix = np.where(
             (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]) <= 0)[0]
         if exclude_ix.shape[0] > 0:
@@ -2475,6 +2503,7 @@ class MaskRCNN():
         运行检测流程
         images: List of images, potentially of different sizes.
 
+        返回字典列表，每张image一个dict，其中包含：
         Returns a list of dicts, one dict per image. The dict contains:
         rois: [N, (y1, x1, y2, x2)] detection bounding boxes
         class_ids: [N] int class IDs
@@ -2494,10 +2523,12 @@ class MaskRCNN():
             log("molded_images", molded_images)
             log("image_metas", image_metas)
         # Run object detection
+        # 此处运行检测后，得到的是网络mask头，rpn头的输出结果
         detections, mrcnn_class, mrcnn_bbox, mrcnn_mask, \
             rois, rpn_class, rpn_bbox =\
             self.keras_model.predict([molded_images, image_metas], verbose=0)
         # Process detections
+        # 对检测结果进行处理，使其与原图大小相匹配
         results = []
         for i, image in enumerate(images):
             final_rois, final_class_ids, final_scores, final_masks =\

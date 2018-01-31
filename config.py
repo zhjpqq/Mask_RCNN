@@ -44,7 +44,8 @@ class Config(object):
     # Validation stats are also calculated at each epoch end and they
     # might take a while, so don't set this too small to avoid spending
     # a lot of time on validation stats.
-    # 这不需要匹配训练集的Size.
+    # 这不需要匹配训练集的Size. batchSize = GPU_COUNT*IMAGES_PER_GPU
+    # 此参数指定了需要走多少个batch。而不是由tain_set_size/batchSize来自动计算。
     # Tensorboard的更新在每个epoch结束时进行保存，所以此值设置的越小，TBoard的更新频率就越高。
     # 验证统计也在每个epoch结束时进行，且需要耗费一定时间。所以，此值不能设置的太小，
     # 以免在验证统计上花费过多时间。

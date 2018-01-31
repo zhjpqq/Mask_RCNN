@@ -220,7 +220,7 @@ class CocoDataset(utils.Dataset):
 
     def load_mask(self, image_id):
         """Load instance masks for the given image.
-        一张图片上可能有多个物体，且分属不同的类
+        一张图片上可能有多个物体，且分属不同的类，此处要使用源数据集中的类标id。
         image_id → (instance_mask，class_ID)×N
 
         Different datasets use different ways to store masks. This
@@ -313,7 +313,7 @@ class CocoDataset(utils.Dataset):
         Convert annotation which can be polygons, uncompressed RLE, or RLE to binary mask.
         :return: binary mask (numpy 2D array)
         将行程码格式的annotation转换为二值mask
-        mask格式为：2D numpy数组 [height, wiodth] bool值
+        mask格式为：2D numpy数组 [height, wiodth] 0/1 bool值
         """
         rle = self.annToRLE(ann, height, width)
         m = maskUtils.decode(rle)
@@ -338,7 +338,7 @@ def build_coco_results(dataset, image_ids, rois, class_ids, scores, masks):
         for i in range(rois.shape[0]):
             class_id = class_ids[i]
             score = scores[i]
-            bbox = np.around(rois[i], 1)
+            bbox = np.around(rois[i], 1)    # 检测出的roi的坐标可能是小数,精确到1位小数点
             mask = masks[:, :, i]
 
             result = {
@@ -381,7 +381,7 @@ def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=Non
         image = dataset.load_image(image_id)
 
         # Run detection
-        # 运行检测
+        # 运行检测，只送入了一张图片[image],所以检测结果也是一个result=[result][0]
         t = time.time()
         r = model.detect([image], verbose=0)[0]
         t_prediction += (time.time() - t)
@@ -468,6 +468,11 @@ if __name__ == '__main__':
             IMAGES_PER_GPU = 1
             DETECTION_MIN_CONFIDENCE = 0
         config = InferenceConfig()
+        # 直接如下定义也可以
+        # config = CocoConfig()
+        # config.GPU_COUNT = 1
+        # config.IMAGES_PER_GPU = 1
+        # config.DETECTION_MIN_CONFIDENCE = 0
     config.display()
 
     # Create model
