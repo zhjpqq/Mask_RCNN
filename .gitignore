@@ -10,6 +10,10 @@ __pycache__/
 # C extensions
 *.so
 
+logs
+logs/
+logs/*
+
 # Distribution / packaging
 .Python
 env/
