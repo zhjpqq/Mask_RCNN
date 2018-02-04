@@ -1052,6 +1052,8 @@ def smooth_l1_loss(y_true, y_pred):
 def rpn_class_loss_graph(rpn_match, rpn_class_logits):
     """RPN anchor classifier loss.
 
+    # 从match中导出AG/BG类标：-1的match就是BG类，+1的mach就是FG类，±1的都是样本
+
     rpn_match: [batch, anchors, 1]. Anchor match type. 1=positive,
                -1=negative, 0=neutral anchor.
     rpn_class_logits: [batch, anchors, 2]. RPN classifier logits for FG/BG.
@@ -1442,7 +1444,7 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
 
     给定anchors锚点框和GT框，计算重合度以鉴别正锚点框，并计算匹配修正量。
 
-    1.过滤基准框gt_boxes → 2.计算重合度overlaps → 3.查找匹配框match-box（anchor-gt） → 4.计算偏移量rpn_bbox
+    1.过滤基准框gt_boxes → 2.计算重合度overlaps → 3.查找匹配框anchor-box（gt-box） → 4.计算偏移量rpn_bbox
 
     IoU匹配挑选：将随机采出的锚点框和GTBoxes进行对比，舍弃无效锚点框，校准有效锚点框。
 
@@ -1471,7 +1473,7 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
     # 记录anchors是否是一个好的anchor-match
     rpn_match = np.zeros([anchors.shape[0]], dtype=np.int32)
     # RPN bounding boxes: [max anchors per image, (dy, dx, log(dh), log(dw))]
-    # 在好的anchors中，进一步选出好的bbox
+    # 记录匹配到的anchors的box偏移量
     rpn_bbox = np.zeros((config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4))
 
     # Handle COCO crowds
@@ -1499,7 +1501,7 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
         no_crowd_bool = np.ones([anchors.shape[0]], dtype=bool)
 
     # Compute overlaps [num_anchors, num_gt_boxes]
-    # 计算每个锚点框和每个GT框的重合度 [锚点BOX, GT-BOX]
+    # 计算每个锚点框和每个GT框的两两重合度 [锚点BOX, GT-BOX]
     overlaps = utils.compute_overlaps(anchors, gt_boxes)
 
     # Match anchors to GT Boxes 将锚点框匹配到GT Boxes
@@ -1511,14 +1513,17 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
     # match it to the closest anchor (even if its max IoU is < 0.3).
     #
     # 1. Set negative anchors first. They get overwritten below if a GT box is
-    # matched to them. Skip boxes in crowd areas. 首先从anchors的角度过滤。
+    # matched to them. Skip boxes in crowd areas.
+    # 首先从anchors的角度过滤。
     # 低重合度的anchors==-1
-    # axis=1 每个锚点anchor与哪个GTbox更重合，先取最大argmax，再取阈值0.3
+    # axis=1 每个锚点anchor与哪个GTbox更重合，故先取最大argmax；
+    # 但即使最重合的GTbox可能也与之不是非常重合，故再取iou阈值0.3；
     anchor_iou_argmax = np.argmax(overlaps, axis=1)
     anchor_iou_max = overlaps[np.arange(overlaps.shape[0]), anchor_iou_argmax]
     rpn_match[(anchor_iou_max < 0.3) & (no_crowd_bool)] = -1
     # 2. Set an anchor for each GT box (regardless of IoU value).
-    # 每个GTbox都应该至少有一个anchor，而无论其IoU值，==1. 其次从GTbox的角度过滤。
+    # 其次从GTbox的角度过滤。
+    # 每个GTbox都应该至少有一个anchor，而无论其IoU值.
     # TODO: If multiple anchors have the same IoU match all of them
     gt_iou_argmax = np.argmax(overlaps, axis=0)
     rpn_match[gt_iou_argmax] = 1
@@ -1528,7 +1533,7 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
 
     # Subsample to balance positive and negative anchors
     # Don't let positives be more than half the anchors
-    # 平衡正负锚点BOX，将多余的正负锚点box置为0
+    # 平衡正负锚点BOX，将多余的正负锚点box置为0，各占50%
     ids = np.where(rpn_match == 1)[0]
     extra = len(ids) - (config.RPN_TRAIN_ANCHORS_PER_IMAGE // 2)
     if extra > 0:
@@ -1546,14 +1551,13 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
 
     # For positive anchors, compute shift and scale needed to transform them
     # to match the corresponding GT boxes.
-    # 遍历正匹配的anchor-boxes
-    # 并计算其偏移量，缩放尺度，以使其匹配GT-boxes
+    # 遍历正匹配的anchor-boxes，并计算其偏移量，缩放尺度，以使其匹配GT-boxes
     ids = np.where(rpn_match == 1)[0]
     ix = 0  # index into rpn_bbox
     # TODO: use box_refinment() rather than duplicating the code here
     for i, a in zip(ids, anchors[ids]):
         # Closest gt box (it might have IoU < 0.7)
-        # 取离每个anchor最近的那个GT-box,就是重合度最高的那个，但重合度不一定大于0.7
+        # 取离每个anchor最近的那个GT-box作为其GT-box，就是重合度最高的那个，但重合度不一定大于0.7
         gt = gt_boxes[anchor_iou_argmax[i]]
 
         # Convert coordinates to center plus width/height.
@@ -1708,7 +1712,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
     error_count = 0
 
     # Anchors
-    # [anchor_count, (y1, x1, y2, x2)]  以对角坐标表示的锚点图(Proposals)
+    # [anchor_count, (y1, x1, y2, x2)]  以对角坐标表示的锚点框，且坐标已被映射回原图
     anchors = utils.generate_pyramid_anchors(config.RPN_ANCHOR_SCALES,  #锚点框的边长
                                              config.RPN_ANCHOR_RATIOS,  #锚点框的形状  长宽方
                                              config.BACKBONE_SHAPES,
@@ -1732,8 +1736,8 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
             # Skip images that have no instances. This can happen in cases
             # where we train on a subset of classes and the image doesn't
             # have any of the classes we care about.
-            # 跳过没有实例的图像。假设在所有类的一个子集上训练，但某图片中的实例类都不在此子集中，
-            # 则跳过此图片。
+            # 跳过没有实例的图像。这种情况适用于：
+            # 假设只在所有类的一个子集上训练，但某图片中的实例类都不在此子集中，则跳过此图片。
             if not np.any(gt_class_ids > 0):
                 continue
 
@@ -1961,7 +1965,7 @@ class MaskRCNN():
         rpn_feature_maps = [P2, P3, P4, P5, P6]
         mrcnn_feature_maps = [P2, P3, P4, P5]
 
-        # Generate Anchors
+        # Generate Anchors  包含锚点框坐标值：(y1, x1, y2, x2)
         self.anchors = utils.generate_pyramid_anchors(config.RPN_ANCHOR_SCALES,
                                                       config.RPN_ANCHOR_RATIOS,
                                                       config.BACKBONE_SHAPES,
@@ -1994,10 +1998,11 @@ class MaskRCNN():
         outputs = [KL.Concatenate(axis=1, name=n)(list(o))
                    for o, n in zip(outputs, output_names)]
 
+        # rpn 网络的预测值  rpn_bbox：预测的锚点框的位置偏移量[dx dy dw dh]
         rpn_class_logits, rpn_class, rpn_bbox = outputs
 
         # Generate proposals
-        # 生成建议区域
+        # 生成建议区域 : 将rpn的预测位置偏移量dx应用到self.anchors中的位置坐标x上去，并进行NMS/COUNT过滤，得到proposals.
         # Proposals are [batch, N, (y1, x1, y2, x2)] in normalized coordinates
         # and zero padded.
         proposal_count = config.POST_NMS_ROIS_TRAINING if mode == "training"\
@@ -2024,7 +2029,7 @@ class MaskRCNN():
             else:
                 target_rois = rpn_rois
 
-            # Generate detection targets    # 生成检测目标用于训练
+            # Generate detection targets    # 生成用于训练的检测目标值 target
             # Subsamples proposals and generates target outputs for training
             # Note that proposal class IDs, gt_boxes, and gt_masks are zero
             # padded. Equally, returned rois and targets are zero padded.
@@ -2032,7 +2037,7 @@ class MaskRCNN():
                 DetectionTargetLayer(config, name="proposal_targets")([
                     target_rois, input_gt_class_ids, gt_boxes, input_gt_masks])
 
-            # Network Heads 添加网络头部
+            # Network Heads 添加网络头部      # 获得用于训练的检测预测值 prediction
             # 分类头 检测头 分割头 都基于 mrcnn_feature_maps P2~P5 + rois 进行工作
             # TODO: verify that this handles zero padded ROIs
             mrcnn_class_logits, mrcnn_class, mrcnn_bbox =\
@@ -2048,7 +2053,7 @@ class MaskRCNN():
             output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
 
             # Losses 添加损失
-            rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")(
+            rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name=" ")(
                 [input_rpn_match, rpn_class_logits])
             rpn_bbox_loss = KL.Lambda(lambda x: rpn_bbox_loss_graph(config, *x), name="rpn_bbox_loss")(
                 [input_rpn_bbox, input_rpn_match, rpn_bbox])
