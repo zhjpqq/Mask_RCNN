@@ -1799,7 +1799,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                 gt_masks = gt_masks[:, :, ids]
 
             # Add to batch
-            # 将数据装入batch中
+            # 将数据装入batch中, rpn已在第一阶段预训练完成，所以其输出可加入batch。
             batch_image_meta[b] = image_meta
             batch_rpn_match[b] = rpn_match[:, np.newaxis]
             batch_rpn_bbox[b] = rpn_bbox
