@@ -381,6 +381,7 @@ def rpn_graph(feature_map, anchors_per_location, anchor_stride):
 
     return [rpn_class_logits, rpn_probs, rpn_bbox]
 
+
 def build_rpn_model(anchor_stride, anchors_per_location, depth):
     """Builds a Keras model of the Region Proposal Network.
     It wraps the RPN graph so it can be used multiple times with shared
@@ -471,7 +472,7 @@ class PyramidROIAlign(KE.Layer):
 
         # Loop through levels and apply ROI pooling to each. P2 to P5.
         # 在各层上循环，并对每一层使用ROI池化. P2-P5层.
-        pooled = [] # 池化后的特征图
+        pooled = []       # 池化后的特征图
         box_to_level = [] # box-to-level的对应关系
         for i, level in enumerate(range(2, 6)):
 
@@ -945,8 +946,7 @@ def fpn_classifier_graph(rois, feature_maps,
     Returns:
         logits: [N, NUM_CLASSES] classifier logits (before softmax)
         probs: [N, NUM_CLASSES] classifier probabilities
-        bbox_deltas: [N, (dy, dx, log(dh), log(dw))] Deltas to apply to
-                     proposal boxes
+        bbox_deltas: [N, (dy, dx, log(dh), log(dw))] Deltas to apply to proposal boxes
     """
     # ROI Pooling
     # Shape: [batch, num_boxes, pool_height, pool_width, channels]
@@ -2532,6 +2532,7 @@ class MaskRCNN():
         detections, mrcnn_class, mrcnn_bbox, mrcnn_mask, \
             rois, rpn_class, rpn_bbox =\
             self.keras_model.predict([molded_images, image_metas], verbose=0)
+
         # Process detections
         # 对检测结果进行处理，使其与原图大小相匹配
         results = []

@@ -20,8 +20,6 @@ import model as modellib
 import visualize
 from model import log
 
-# %matplotlib inline
-
 # Root directory of the project
 ROOT_DIR = os.getcwd()
 
@@ -84,7 +82,6 @@ def get_ax(rows=1, cols=1, size=8):
     """
     _, ax = plt.subplots(rows, cols, figsize=(size * cols, size * rows))
     return ax
-
 
 
 class ShapesDataset(utils.Dataset):

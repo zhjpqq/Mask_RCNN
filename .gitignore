@@ -108,3 +108,4 @@ ENV/
 /aiblog/static/css/blog-myblog-notex.css
 
 
+*.h5
