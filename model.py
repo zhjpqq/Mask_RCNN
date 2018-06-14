@@ -1856,7 +1856,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
 class MaskRCNN():
     """Encapsulates the Mask RCNN model functionality.
 
-    The actual Keras model is in the keras_model property. ？
+    The actual Keras model is in the keras_model property.
     """
 
     def __init__(self, mode, config, model_dir):
